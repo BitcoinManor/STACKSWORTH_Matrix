@@ -110,8 +110,10 @@ STACKSWORTH proudly leverages the power of open APIs to deliver real-time Bitcoi
 
 🚦 mempool.space – for accurate fee estimates
 
-Huge thanks to these projects for their dedication to open data and transparency in the Bitcoin ecosystem.
-We encourage supporting them by contributing, using their services respectfully, or self-hosting when possible.
+Huge thanks to these projects for their dedication to open data and transparency
+ in the Bitcoin ecosystem.
+We encourage supporting them by contributing, using their services respectfully,
+ or self-hosting when possible.
 
 Built by [Bitcoin Manor](https://bitcoinmanor.com) for the sovereign individual.
 
