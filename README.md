@@ -99,7 +99,7 @@ Preferences prefs;
 # 6. Enter the SW-MATRIX network and add your SSID, Password, City, TimeZone and hit the Save button.
  It will reboot and connect to your WiFi
 
-
+---
 
 ## 🙏 Data Sources & Attribution
 STACKSWORTH proudly leverages the power of open APIs to deliver real-time Bitcoin data:
