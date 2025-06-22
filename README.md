@@ -4,7 +4,8 @@
 ![STACKSWORTH Banner](https://github.com/YourUser/STACKSWORTH_Matrix_v1.01/raw/main/assets/stacksworth_banner.png)
 
 Welcome to **STACKSWORTH**, the future of open-source Bitcoin displays.  
-Track real-time price, block height, mempool fees, and weather — all from a sleek, plug-and-play LED matrix that’s built for Bitcoiners, by Bitcoiners.
+Track real-time price, block height, mempool fees, and weather — all from a sleek, plug-and-play LED matrix 
+that’s built for Bitcoiners, by Bitcoiners.
 
 ---
 
@@ -98,7 +99,7 @@ Preferences prefs;
 # 5. Use "ESP32 Sketch Data Upload" under Tools to flash /data folder to SPIFFS
 # 6. Enter the SW-MATRIX network and add your SSID, Password, City, TimeZone and hit the Save button.
  It will reboot and connect to your WiFi
-
+```
 ---
 
 ## 🙏 Data Sources & Attribution
@@ -110,8 +111,10 @@ STACKSWORTH proudly leverages the power of open APIs to deliver real-time Bitcoi
 
 🚦 mempool.space – for accurate fee estimates
 
-Huge thanks to these projects for their dedication to open data and transparency in the Bitcoin ecosystem.
-We encourage supporting them by contributing, using their services respectfully, or self-hosting when possible.
+Huge thanks to these projects for their dedication to open data and transparency 
+in the Bitcoin ecosystem.
+We encourage supporting them by contributing, using their services respectfully, 
+or self-hosting when possible.
 
 Built by [Bitcoin Manor](https://bitcoinmanor.com) for the sovereign individual.
 
