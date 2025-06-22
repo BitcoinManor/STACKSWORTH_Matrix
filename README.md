@@ -77,29 +77,28 @@ git clone https://github.com/BitcoinManor/STACKSWORTH_Matrix_v1.01.git
 # 2. Open the .ino in Arduino IDE
 
 # 3. Install these libraries:
-#include <MD_Parola.h>
-#include <MD_MAX72xx.h>
-#include <SPI.h>
-#include <WiFiManager.h>
-#include <HTTPClient.h>
-#include <ArduinoJson.h>
-#include "esp_task_wdt.h"
-#include "Font_Data.h" // Optional, if using custom fonts
-#include "time.h"
-#include <FS.h>
-#include <SPIFFS.h>
-#include <ESPAsyncWebServer.h>
-#include <AsyncTCP.h>
-#include <DNSServer.h>
-DNSServer dnsServer;
-#include <Preferences.h>
-Preferences prefs;
+MD_Parola.h  
+MD_MAX72xx.h  
+SPI.h  
+WiFiManager.h  
+HTTPClient.h  
+ArduinoJson.h  
+esp_task_wdt.h  
+Font_Data.h  
+time.h  
+FS.h  
+SPIFFS.h  
+ESPAsyncWebServer.h  
+AsyncTCP.h  
+DNSServer.h  
+Preferences.h
 
-# 4. Upload sketch to your ESP32,then make certain the html.gz file is inside the data folder
+# 4. Upload sketch to your ESP32, then make certain the html.gz file is inside the data folder
 # 5. Use "ESP32 Sketch Data Upload" under Tools to flash /data folder to SPIFFS
 # 6. Enter the SW-MATRIX network and add your SSID, Password, City, TimeZone and hit the Save button.
- It will reboot and connect to your WiFi
+#    It will reboot and connect to your WiFi
 ```
+
 ---
 
 ## 🙏 Data Sources & Attribution
