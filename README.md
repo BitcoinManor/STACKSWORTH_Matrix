@@ -1,11 +1,22 @@
-# ⚡ STACKSWORTH Matrix v1.01  
+# ⚡ STACKSWORTH Matrix  
 **Open Source • Web Flashable • Bitcoin at a Glance**
 
-![STACKSWORTH Banner](https://github.com/YourUser/STACKSWORTH_Matrix_v1.01/raw/main/assets/stacksworth_banner.png)
+![STACKSWORTH Banner](https://github.com/BitcoinManor/STACKSWORTH_Matrix/raw/main/assets/stacksworth_banner.png)
 
 Welcome to **STACKSWORTH**, the future of open-source Bitcoin displays.  
-Track real-time price, block height, mempool fees, and weather — all from a sleek, plug-and-play LED matrix 
+Watch Bitcoin's Pulse at a Glance in real time  — price, block height, mempool fees, sats/dollar and weather — all from a sleek, plug-and-play LED matrix 
 that’s built for Bitcoiners, by Bitcoiners.
+
+---
+
+## 🚀 Latest Firmware: v1.0.2
+
+🆕 MAC-based AP ID (e.g. `SW-MATRIX-E4E204`)  
+🌐 Matching ID in hotspot, HTML portal, and network list  
+🛠️ Improved UX for multi-device setups and flashing
+
+📦 [Download v1.0.2 ZIP](https://github.com/BitcoinManor/STACKSWORTH_MATRIX/releases/download/v1.0.2/STACKSWORTH_MATRIX_v1.0.2.zip)  
+📓 [See Changelog](https://github.com/BitcoinManor/STACKSWORTH_MATRIX/blob/main/CHANGELOG.md)
 
 ---
 
@@ -18,7 +29,7 @@ that’s built for Bitcoiners, by Bitcoiners.
   [stacksworth.com](https://stacksworth.com)
 
 - **🛠 Full Source Code + Firmware:**  
-  [STACKSWORTH GitHub](https://github.com/BitcoinManor/STACKSWORTH_Matrix_v1.01)
+  [STACKSWORTH GitHub](https://github.com/BitcoinManor/STACKSWORTH_Matrix)
 
 - **🎉 Follow Us:**  
   [Twitter/X](https://x.com/BitcoinManor) | [Instagram](https://www.instagram.com/bitcoinmanor/)
@@ -72,7 +83,7 @@ Future versions will include:
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/BitcoinManor/STACKSWORTH_Matrix_v1.01.git
+git clone https://github.com/BitcoinManor/STACKSWORTH_Matrix.git
 
 # 2. Open the .ino in Arduino IDE
 
@@ -100,6 +111,13 @@ Preferences.h
 ```
 
 ---
+## 📜 License
+
+MIT License — use freely, fork often, flash everything.
+⚖️ 
+
+
+---
 
 ## 🙏 Data Sources & Attribution
 STACKSWORTH proudly leverages the power of open APIs to deliver real-time Bitcoin data:
@@ -124,14 +142,9 @@ Built by [Bitcoin Manor](https://bitcoinmanor.com) for the sovereign individual.
 
 ---
 
-## 📜 License
-
-MIT License — use freely, fork often, flash everything.
-⚖️ 
-
 **Powered by Bitcoin.** Not just another gadget. This is **signal**.
 
-STACKSWORTH_Matrix_v1.01 | Bitcoin Manor
-Open Source | Web Flashable | Self-Sovereign
-https://github.com/BitcoinManor/STACKSWORTH_Matrix_v1.01
-
+Built with ⚡ by [Bitcoin Manor](https://bitcoinmanor.com)
+Open Source | Web Flashable | Self-Sovereign | Made for Bitcoiners
+https://github.com/BitcoinManor/STACKSWORTH_Matrix
+[github.com/BitcoinManor/STACKSWORTH_MATRIX](https://github.com/BitcoinManor/STACKSWORTH_MATRIX)
