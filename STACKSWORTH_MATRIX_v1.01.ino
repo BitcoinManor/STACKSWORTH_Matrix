@@ -12,10 +12,27 @@
 #include <SPIFFS.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
+#include <WiFi.h>
+#include <esp_wifi.h>  // Needed for esp_read_mac
+#include "esp_system.h"
 #include <DNSServer.h>
 DNSServer dnsServer;
 #include <Preferences.h>
 Preferences prefs;
+
+
+// retrieve and store the MAC
+String getShortMAC() {
+  uint8_t mac[6];
+  esp_wifi_get_mac(WIFI_IF_STA, mac);  // Get STA interface MAC
+  char shortID[7];
+  sprintf(shortID, "%02X%02X%02X", mac[3], mac[4], mac[5]);  // last 3 bytes (6 hex chars)
+  return String(shortID);
+}
+
+String macID;
+
+
 
 bool wifiConnected = false;
 bool buttonPressed = false;
@@ -34,12 +51,75 @@ uint8_t displayCycle = 0; // 👈 for rotating which screen we show
 AsyncWebServer server(80);
 
 // 🌍 API Endpoints
-const char* BTC_API = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true";;
+const char* BTC_API = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true";
 const char *BLOCK_API = "https://blockchain.info/q/getblockcount";
 const char *FEES_API = "https://mempool.space/api/v1/fees/recommended";
 const char *MEMPOOL_BLOCKS_API = "https://mempool.space/api/blocks";
 const char *BLOCKSTREAM_TX_API_BASE = "https://blockstream.info/api/block/";
 
+// ---- Smash Buy phrases split into TOP / BOTTOM lines ----
+const char* PHRASES[][2] = {
+  { "SMASH",           "BUY!" },
+  { "DON'T TRUST",     "VERIFY!" },
+  { "STACK",           "SATS" },
+  { "RUN A",           "NODE" },
+  { "NOT YOUR",        "KEYS" },
+  { "FIX THE",         "MONEY" },
+  { "STAY",            "HUMBLE" },
+  { "OPT",             "OUT" },
+  { " LOW TIME",       "PREFERENCE" },  // fun variation
+  { "INFINITE",        "GAME" },
+  { "HARDER",          "MONEY" },
+  { "BITCOIN",         "> FIAT" },
+  { "LET'S",            "GO" }
+};
+#define NUM_PHRASES (sizeof(PHRASES) / sizeof(PHRASES[0]))
+
+
+
+
+
+/*
+// Miner Pool Detection
+String minerName = "Unknown";
+
+struct MinerTag {
+  const char* tag;
+  const char* name;
+};
+
+const MinerTag knownTags[] = {
+  { "f2pool", "F2Pool" }, { "antpool", "AntPool" }, { "viabtc", "ViaBTC" },
+  { "poolin", "Poolin" }, { "btccom", "BTC.com" }, { "binance", "Binance Pool" },
+  { "carbon", "Carbon Negative" }, { "slush", "Slush Pool" }, { "braiins", "Braiins Pool" },
+  { "foundry", "Foundry USA" }, { "ocean", "Ocean Pool" }, { "mara", "Marathon" },
+  { "marathon", "Marathon" }, { "luxor", "Luxor" }, { "ultimus", "ULTIMUSPOOL" },
+  { "novablock", "NovaBlock" }, { "sigma", "SigmaPool" }, { "spider", "SpiderPool" },
+  { "tera", "TERA Pool" }, { "okex", "OKEx Pool" }, { "kucoin", "KuCoin Pool" },
+  { "sbi", "SBI Crypto" }, { "btctop", "BTC.TOP" }, { "emcd", "EMCD Pool" },
+  { "secpool", "SECPOOL" }, { "hz", "HZ Pool" }, { "solo.ckpool", "Solo CKPool" },
+  { "solopool", "Solo Pool" }, { "solo", "Solo Miner" }, { "bitaxe", "Bitaxe Solo Miner" },
+  { "node.pw", "Node.PW" }, { "/axe/", "Bitaxe Solo Miner" }
+};
+
+String hexToAscii(const String& hex) {
+  String ascii = "";
+  for (unsigned int i = 0; i < hex.length(); i += 2) {
+    char c = (char) strtol(hex.substring(i, i + 2).c_str(), nullptr, 16);
+    if (isPrintable(c)) ascii += c;
+  }
+  return ascii;
+}
+
+String identifyMiner(String scriptSig) {
+  scriptSig.toLowerCase();
+  for (const auto& tag : knownTags) {
+    if (scriptSig.indexOf(tag.tag) != -1) return tag.name;
+  }
+  return "Unknown";
+}
+
+*/
 
 
 String mapWeatherCode(int code)
@@ -114,10 +194,11 @@ String formatWithCommas(int number)
 #define CLK_PIN 18
 #define DATA_PIN 23
 #define CS_PIN 5
-
+#define BUTTON_PIN 25   //Pin for Smash Buy Button
 
 MD_Parola P = MD_Parola(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
-// int brightnessLevel = 6;  // 0 = dimmest, 15 = brightest
+// Brightness: 0 = dimmest, 15 = brightest
+uint8_t BRIGHTNESS = 1;
 unsigned long lastFetchTime = 0;
 uint8_t cycle = 0;             // 🔥 Needed for animation control
 unsigned long lastApiCall = 0; // 🔥 Needed for fetch timing
@@ -230,10 +311,16 @@ void loadSavedSettingsAndConnect() {
     {
       Serial.println("🚀 Starting Access Point...");
       WiFi.mode(WIFI_AP);
-      WiFi.softAP("SW-MATRIX");
+      macID = getShortMAC();  // Store globally
+      String ssid = "SW-MATRIX-" + getShortMAC();
+      WiFi.softAP(ssid.c_str());
+
+
       IPAddress myIP = WiFi.softAPIP();
       Serial.print("🌍 AP IP address: ");
       Serial.println(myIP);
+      Serial.print("📶 AP SSID: ");
+      Serial.println(ssid); // Helpful for debug
 
       // DNS Captive portal
       dnsServer.start(53, "*", myIP);
@@ -241,34 +328,34 @@ void loadSavedSettingsAndConnect() {
     }
 
     // FETCH FUNCTIONS
-    void fetchBitcoinData()
-    {
-      if (ESP.getFreeHeap() < 160000)
-      {
-        Serial.println("❌ Not enough heap to safely fetch. Skipping BTC fetch.");
-        return;
-      }
-      Serial.println("🔄 Fetching BTC Price...");
-      HTTPClient http;
-      http.begin(BTC_API);
-      if (http.GET() == 200)
-      {
-        DynamicJsonDocument doc(512);
-        deserializeJson(doc, http.getString());
-        btcPrice = doc["bitcoin"]["usd"];
-        satsPerDollar = 100000000 / btcPrice;
-        sprintf(btcText, "$%s", formatWithCommas(btcPrice).c_str());
-        sprintf(satsText, "%d sats/$", satsPerDollar);
-        Serial.printf("✅ Updated BTC Price: $%d | Sats per $: %d\n", btcPrice, satsPerDollar);
-        Serial.printf("✅ BTC Price: %s (%s)\n", btcText, satsText);
-      }
-      else
-      {
-        Serial.println("❌ Failed to fetch BTC Price");
-      }
-      http.end();
-      Serial.printf("📈 Free heap after fetch: %d bytes\n", ESP.getFreeHeap());
-    }
+    void fetchBitcoinData() {
+  if (ESP.getFreeHeap() < 160000) {
+    Serial.println("❌ Not enough heap to safely fetch. Skipping BTC fetch.");
+    return;
+  }
+  Serial.println("🔄 Fetching BTC Price...");
+  HTTPClient http;
+  http.begin(BTC_API);
+  if (http.GET() == 200) {
+    DynamicJsonDocument doc(512);
+    deserializeJson(doc, http.getString());
+    btcPrice = doc["bitcoin"]["usd"];
+    btcChange24h = doc["bitcoin"]["usd_24h_change"];
+    satsPerDollar = 100000000 / btcPrice;
+
+    sprintf(btcText, "$%s", formatWithCommas(btcPrice).c_str());
+    sprintf(satsText, "%d sats", satsPerDollar);
+    snprintf(changeText, sizeof(changeText), "%+.2f%%", btcChange24h);
+
+    Serial.printf("✅ Updated BTC Price: $%d | Sats per $: %d\n", btcPrice, satsPerDollar);
+    Serial.printf("✅ BTC Price: %s (%s)\n", btcText, satsText);
+  } else {
+    Serial.println("❌ Failed to fetch BTC Price");
+  }
+  http.end();
+  Serial.printf("📈 Free heap after fetch: %d bytes\n", ESP.getFreeHeap());
+}
+
 
     void fetchBlockHeight()
     {
@@ -294,6 +381,74 @@ void loadSavedSettingsAndConnect() {
       http.end();
       Serial.printf("📈 Free heap after fetch: %d bytes\n", ESP.getFreeHeap());
     }
+
+/*
+     void fetchMinerName() {
+    if (ESP.getFreeHeap() < 160000) {
+      Serial.println("❌ Not enough heap to safely fetch. Skipping miner fetch.");
+      return;
+    }
+
+    Serial.println("🔄 Fetching Miner Name...");
+
+    static String lastValidMiner = "Unknown";  // Cache last known valid miner
+
+    HTTPClient http;
+    http.begin(MEMPOOL_BLOCKS_API);
+    if (http.GET() == 200) {
+      DynamicJsonDocument doc(2048);
+      DeserializationError error = deserializeJson(doc, http.getString());
+      if (error) {
+        Serial.println("❌ Failed to parse mempool blocks JSON.");
+        minerName = lastValidMiner != "Unknown" ? lastValidMiner : "Checking...";
+        http.end();
+        return;
+      }
+
+      String blockHash = doc[0]["id"];
+      Serial.printf("🧱 Latest Block Hash: %s\n", blockHash.c_str());
+     http.end();
+
+      http.begin(String(BLOCKSTREAM_TX_API_BASE) + blockHash + "/txs");
+      if (http.GET() == 200) {
+        String payload = http.getString();
+        DynamicJsonDocument txDoc(8192);
+        DeserializationError txError = deserializeJson(txDoc, payload);
+
+        if (!txError && txDoc.size() > 0) {
+          String rawScriptSig = txDoc[0]["vin"][0]["scriptsig"].as<String>();
+          Serial.printf("📜 Raw ScriptSig (Hex): %s\n", rawScriptSig.c_str());
+
+          String decoded = hexToAscii(rawScriptSig);
+          Serial.printf("🔍 Decoded ScriptSig (ASCII): %s\n", decoded.c_str());
+
+          String identified = identifyMiner(decoded);
+          if (identified != "Unknown") {
+            minerName = identified;
+            lastValidMiner = identified;
+          } else {
+            Serial.println("⚠️ Miner tag not recognized, using last known valid.");
+            minerName = lastValidMiner != "Unknown" ? lastValidMiner : "Checking...";
+          }
+        } else {
+          Serial.println("❌ Failed to parse TX JSON.");
+          minerName = lastValidMiner != "Unknown" ? lastValidMiner : "Checking...";
+          }
+        } else {
+          Serial.println("❌ Failed to fetch TXs from Blockstream.");
+          minerName = lastValidMiner != "Unknown" ? lastValidMiner : "Checking...";
+      }
+    } else {
+      Serial.println("❌ Failed to fetch blocks from mempool.");
+      minerName = lastValidMiner != "Unknown" ? lastValidMiner : "Checking...";
+    }
+
+    http.end();
+    Serial.printf("✅ Mined By: %s\n", minerName.c_str());
+    Serial.printf("📈 Free heap after miner fetch: %d bytes\n", ESP.getFreeHeap());
+  }
+
+*/
 
     void fetchFeeRate()
     {
@@ -473,6 +628,15 @@ void loadSavedSettingsAndConnect() {
       Serial.begin(115200);
       Serial.println("🚀 Starting STACKSWORTH Matrix Setup...");
 
+
+      //Adding MAC Address to ID
+      macID = getShortMAC();
+      Serial.println("🆔 MAC Fragment: " + macID);
+
+      prefs.begin("device", false);
+      prefs.putString("shortMAC", macID);
+      prefs.end();
+
     
 
       // Monitor available heap memory
@@ -505,10 +669,13 @@ void loadSavedSettingsAndConnect() {
       // LED Matrix Startup
       Serial.println("💡 Initializing LED Matrix...");
       P.begin(MAX_ZONES);
+      P.setIntensity(BRIGHTNESS);
       P.setZone(ZONE_LOWER, 0, ZONE_SIZE - 1);
       P.setZone(ZONE_UPPER, ZONE_SIZE, MAX_DEVICES - 1);
       P.setFont(nullptr);
-      // P.setIntensity(brightnessLevel);
+
+
+      randomSeed(esp_random());
 
       // Show Welcome Loop
       if (!wifiConnected)
@@ -580,6 +747,13 @@ void loadSavedSettingsAndConnect() {
     request->send(400, "text/plain", "Missing parameters");
   } });
 
+
+      // Serve MAC fragment to the portal
+      server.on("/macid", HTTP_GET, [](AsyncWebServerRequest *request) {
+      request->send(200, "text/plain", getShortMAC());
+    });
+
+
       // Captive Portal Redirect
       server.onNotFound([](AsyncWebServerRequest *request)
                         { request->redirect("/");
@@ -618,7 +792,7 @@ void loadSavedSettingsAndConnect() {
       lastWeatherUpdate = millis() - WEATHER_UPDATE_INTERVAL; // Force weather update soon
       lastNTPUpdate = millis() - NTP_UPDATE_INTERVAL;         // Force NTP update soon
 
-     
+     pinMode(BUTTON_PIN, INPUT_PULLUP);  //added this for the Smash Buy Button!!!
 
       esp_task_wdt_config_t wdt_config = {
           .timeout_ms = 12000,                             // 12 seconds
@@ -635,14 +809,161 @@ void loadSavedSettingsAndConnect() {
       esp_task_wdt_reset();           // Reset watchdog
       dnsServer.processNextRequest(); // Handle captive portal DNS magic
 
-      unsigned long currentMillis = millis();
+
+// 🛠️ Smash Buy Button Polling (Debounced)
+static bool lastButtonState = HIGH;
+bool currentButtonState = digitalRead(BUTTON_PIN);
+
+if (lastButtonState == HIGH && currentButtonState == LOW) {
+  // Falling edge: button was released, now pressed
+  Serial.println("🚨 SMASH BUY Button Pressed!");
+  buttonPressed = true;
+}
+
+lastButtonState = currentButtonState;
+
+
+/*
+// THIS IS FOR A WEIGHTED ROLL , uncomment and comment out 
+// 🚀 If button triggered, show SMASH BUY animation
+if (buttonPressed) {
+  buttonPressed = false;
+
+  int roll = random(100);  // 0 to 99
+
+  P.displayClear();
+
+  if (roll < 60) {
+    // 60% chance - Try Again
+    P.displayZoneText(1, "TRY", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+    P.displayZoneText(0, "AGAIN", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+    while (!P.displayAnimate()) {
+      esp_task_wdt_reset();
+      delay(10);
+    }
+
+    P.displayClear();
+    P.displayZoneText(1, "BETTER", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+    P.displayZoneText(0, "LUCK", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+    while (!P.displayAnimate()) {
+      esp_task_wdt_reset();
+      delay(10);
+    }
+
+    P.displayClear();
+    P.displayZoneText(1, "NEXT", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+    P.displayZoneText(0, "TIME", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+    while (!P.displayAnimate()) {
+      esp_task_wdt_reset();
+      delay(10);
+    }
+
+    Serial.println("🎯 Result: Try Again");
+  }
+  else if (roll < 80) {
+    // 20% chance - Free Pin
+    P.displayZoneText(1, "FREE", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+    P.displayZoneText(0, "PIN", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+    while (!P.displayAnimate()) {
+      esp_task_wdt_reset();
+      delay(10);
+    }
+    Serial.println("🎯 Result: Free Pin");
+  }
+  else if (roll < 90) {
+    // 10% chance - 1000 SATS
+    P.displayZoneText(1, "1000", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+    P.displayZoneText(0, "SATS", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+    while (!P.displayAnimate()) {
+      esp_task_wdt_reset();
+      delay(10);
+    }
+    Serial.println("🎯 Result: 1000 SATS");
+  }
+  else {
+    // 10% chance - 2000 SATS
+    P.displayZoneText(1, "2000", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+    P.displayZoneText(0, "SATS", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+    while (!P.displayAnimate()) {
+      esp_task_wdt_reset();
+      delay(10);
+    }
+    Serial.println("🎯 Result: 2000 SATS");
+  }
+
+  P.displayClear();
+  P.synchZoneStart();
+}
+
+*/
+
+
+/*
+// USED FOR SIMPLE CLEAN MESSAGE
+if (buttonPressed) {
+  buttonPressed = false;
+
+P.displayClear();  //Change text to what you wouldl like when button pushed
+P.displayZoneText(1, "SMASH",    PA_CENTER, 0, 2000, PA_FADE, PA_FADE); 
+P.displayZoneText(0, "BUY!",     PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+
+// Let the animation finish while feeding the watchdog
+while (!P.displayAnimate()) {
+  esp_task_wdt_reset();
+  delay(10);
+}
+
+P.displayClear();
+P.synchZoneStart();
+Serial.println("🎯 Smash Buy: SMASH BUY!");
+}
+
+*/
+
+// USED FOR RANDOM PHRASES
+if (buttonPressed) {
+  buttonPressed = false;  // consume the event so it fires once
+
+int idx = random(NUM_PHRASES);
+const char* topLine    = PHRASES[idx][0];
+const char* bottomLine = PHRASES[idx][1];
+
+// Optional: small press lockout to avoid double-fires on long press/bounce
+static unsigned long pressLockUntil = 0;
+if (millis() < pressLockUntil) return;
+pressLockUntil = millis() + 600; // 0.6s cooldown
+
+// Show the message (nice and clean fade). Use your zone IDs as you already do.
+// If you prefer, you can show the same phrase on both lines for impact.
+P.displayClear();
+P.displayZoneText(1, topLine,    PA_CENTER, 0, 2500, PA_FADE, PA_FADE);
+P.displayZoneText(0, bottomLine, PA_CENTER, 0, 2500, PA_FADE, PA_FADE);
+
+// Let the animation finish while keeping WDT happy (ESP32)
+while (!P.displayAnimate()) {
+  esp_task_wdt_reset();
+  delay(10);
+}
+
+P.displayClear();
+P.synchZoneStart();
+Serial.print("🎯 Smash Buy: ");
+Serial.print(topLine);
+Serial.print(" / ");
+Serial.println(bottomLine);
+
+}
+
+
+  unsigned long currentMillis = millis();
+      
 
       // ✅ Monitor heap health every 60 seconds
       static unsigned long lastMemoryCheck = 0;
-      if (currentMillis - lastMemoryCheck >= 60000)
-      {
+      static unsigned long lastHeapLog = 0;
+      if (currentMillis - lastHeapLog >= 60000) {
         Serial.printf("🧠 Free heap: %d | Min ever: %d\n", ESP.getFreeHeap(), ESP.getMinFreeHeap());
-        lastMemoryCheck = currentMillis;
+        lastHeapLog = currentMillis;
       }
 
       // 🚨 Auto-reboot if heap drops too low
@@ -696,11 +1017,21 @@ void loadSavedSettingsAndConnect() {
       case 0:
         Serial.println("🖥️ Displaying BLOCK screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "BLOCK", blockText); 
-        P.displayZoneText(ZONE_UPPER, "BLOCK", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_UPPER, "BLOCK",   PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
         P.displayZoneText(ZONE_LOWER, blockText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
+/*
+      case 1:
+        Serial.println("🖥️ Displaying MINED BY screen...");
+        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MINED BY", minerName.c_str());
+        P.displayZoneText(ZONE_UPPER, "MINED BY", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_FADE);
+        P.displayZoneText(ZONE_LOWER, minerName.c_str(), PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_FADE);
+        P.displayClear(); //  Force clear
+        P.synchZoneStart(); // Force synchronization
+        break; 
+*/
 
      case 1:
         Serial.println("🖥️ Displaying USD PRICE screen...");
@@ -709,7 +1040,9 @@ void loadSavedSettingsAndConnect() {
         P.displayZoneText(ZONE_LOWER, btcText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
-        break;   
+        break; 
+
+          
      case 2:
         Serial.println("🖥️ Displaying 24H CHANGE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "24H CHANGE", changeText);
@@ -727,17 +1060,8 @@ void loadSavedSettingsAndConnect() {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization  
         break;
-
-      case 4:
-        Serial.println("🖥️ Displaying MOSCOW TIME screen...");
-        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText);
-        P.displayZoneText(ZONE_UPPER, "MOSCOW TIME", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, satsText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayClear(); //  Force clear
-        P.synchZoneStart(); // Force synchronization  
-        break;
         
-      case 5:
+      case 4:
         Serial.println("🖥️ Displaying FEE RATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "FEE RATE", feeText);
         P.displayZoneText(ZONE_UPPER, "FEE RATE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -745,15 +1069,19 @@ void loadSavedSettingsAndConnect() {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
-      case 6:
-        Serial.println("🖥️ Displaying TIME screen...");
+
+        
+      case 5:
+        Serial.println("🖥️ Displaying TIME and City screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "TIME", timeText);
         P.displayZoneText(ZONE_UPPER, savedCity.c_str(), PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
         P.displayZoneText(ZONE_LOWER, timeText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
-      case 7:
+
+        
+      case 6:
         Serial.println("🖥️ Displaying DAY/DATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", dayText, dateText);
         P.displayZoneText(ZONE_UPPER, dayText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -761,7 +1089,9 @@ void loadSavedSettingsAndConnect() {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
-      case 8: {
+
+        
+      case 7: {
         Serial.println("🖥️ Displaying WEATHER screen...");
         static char tempDisplay[16];
         snprintf(tempDisplay, sizeof(tempDisplay), (temperature >= 0) ? "+%dC" : "%dC", temperature);
@@ -780,11 +1110,28 @@ void loadSavedSettingsAndConnect() {
         P.synchZoneStart(); // Force synchronization
         break;
       }
+
+
+      case 8:
+        Serial.println("🖥️ Displaying MOSCOW TIME screen...");
+        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText);
+        P.displayZoneText(ZONE_UPPER, "MOSCOW TIME", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_LOWER, satsText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayClear(); //  Force clear
+        P.synchZoneStart(); // Force synchronization  
+        break;
+
+
+      case 9:// This is for the models we ship but can be changed for custom units
+        P.displayZoneText(ZONE_UPPER, "STACKSWORTH", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
+        P.displayZoneText(ZONE_LOWER, "SPARK",      PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
+        P.displayClear();
+        P.synchZoneStart();
+        break;
     }
 
       Serial.println("✅ Screen update complete.");
       displayCycle = (displayCycle + 1) % 10;
-      P.displayClear();
-      P.synchZoneStart();
+      
     }
   }
