@@ -80,12 +80,19 @@ enum UiMode { MODE_ROTATION, MODE_PACMAN };
 static UiMode uiMode = MODE_ROTATION;
 
 const int ROW_COLS = 64;          // columns per matrix row (edit if yours differs)
-const uint16_t PAC_FRAME_MS = 40; // ~25 FPS
+const int TOP_OFFSET = ROW_COLS;   // 64 columns offset to reach the top band
+
+const uint16_t PAC_FRAME_MS = 75;  // same feel as original
 
 static unsigned long pacmanNextFrameAt = 0;
-static int pacmanStep = 0;        // 0..(2*ROW_COLS-1): top row then bottom
+static int pacmanStep = 0;        // 0..(2*ROW_COLS-1): bottom row then top
 static uint8_t pacFrame = 0;      // 0..3 (ping-pong)
 static int8_t pacDir = +1;        // +1 / -1
+static uint8_t pacBand = 0;       // 0 = bottom, 1 = top
+static unsigned long pacmanPrerollUntil = 0;  // pause before each band starts
+
+
+
 
 // 4 Pac-Man frames (18 columns wide)
 const uint8_t PACMAN_FRAMES[4][18] = {
@@ -824,142 +831,195 @@ void loadSavedSettingsAndConnect() {
       esp_task_wdt_add(NULL); // Add current task to WDT
     }
 
-// Draw/erase an 8xW sprite using the 8-bit columns in PACMAN_FRAMES[*][*]
-// rowBase = 0 for TOP row (rows 0..7), rowBase = 8 for BOTTOM row (rows 8..15)
-static void drawSpriteBits(int rowBase, int col0, const uint8_t* cols, int w, bool on) {
+// Draw/erase an 8xW sprite onto a band: columns are absolute = bandOffset + col
+static void drawSpriteBits(int bandOffset, int col0, const uint8_t* cols, int w, bool on) {
   MD_MAX72XX* mx = P.getGraphicObject();
   if (!mx) return;
-
   for (int i = 0; i < w; i++) {
-    int c = col0 + i;
-    if (c < 0) continue; // clip left
-    uint8_t bits = cols[i];  // bit0 = top pixel in this 8-px band
+    int c = bandOffset + col0 + i;     // << absolute column within the 16-device chain
+    if (c < 0) continue;
+    uint8_t bits = cols[i];            // bit0 is row 0, bit7 is row 7
     for (int r = 0; r < 8; r++) {
-      if (bits & (1 << r)) mx->setPoint(rowBase + r, c, on);
+      if (bits & (1 << r)) mx->setPoint(r, c, on);   // << rows are always 0..7
     }
   }
 }
 
 
-  // Track previous frame to erase cleanly
-static int prevRowBase = 0, prevCol0 = -1000;
 
-// Draw current frame (and erase previous columns to "eat" the ₿)
-static void pacmanDrawFrame(int rowBase, int col0) {
+
+
+// Draw current frame (and erase previous columns)
+// Track previous frame to erase cleanly
+static int prevBandOffset = 0, prevCol0 = -1000;
+static void pacmanDrawFrame(int bandOffset, int col0) {
   MD_MAX72XX* mx = P.getGraphicObject();
   if (!mx) return;
 
-  // ERASE: clear full columns where the sprite was previously
-  if (prevCol0 > -1000) {
-    for (int i = 0; i < PAC_W; i++) {
-      int c = prevCol0 + i;
-      if (c < 0 || c >= ROW_COLS) continue;
-      for (int r = 0; r < 8; r++) mx->setPoint(prevRowBase + r, c, false);
+  // ERASE: only if the previous frame actually overlapped this band
+  if (prevCol0 != -1000) {
+    const int bandMin = bandOffset;
+    const int bandMax = bandOffset + ROW_COLS - 1;
+
+    int spanStart = prevBandOffset + prevCol0;          // prev left edge (abs col)
+    int spanEnd   = spanStart + PAC_W - 1;              // prev right edge
+    if (spanEnd >= bandMin && spanStart <= bandMax) {
+      if (spanStart < bandMin) spanStart = bandMin;
+      if (spanEnd   > bandMax) spanEnd   = bandMax;
+      for (int c = spanStart; c <= spanEnd; c++) {
+        for (int r = 0; r < 8; r++) mx->setPoint(r, c, false);
+      }
     }
   }
 
-  // DRAW: paint current frame bits at the new position
-  drawSpriteBits(rowBase, col0, PACMAN_FRAMES[pacFrame], PAC_W, /*on=*/true);
+  // DRAW: paint current sprite at new position
+  drawSpriteBits(bandOffset, col0, PACMAN_FRAMES[pacFrame], PAC_W, /*on=*/true);
 
   // remember for next erase
-  prevRowBase = rowBase;
-  prevCol0    = col0;
+  prevBandOffset = bandOffset;
+  prevCol0       = col0;
 }
 
 
-// Draw the repeating ₿ background across one 8-pixel-high row-band
-// rowBase = 0 for TOP band (rows 0..7), rowBase = 8 for BOTTOM band (rows 8..15)
-static void drawBitcoinRow(int rowBase) {
+
+// Draw the repeating ₿ pattern across one band (bandOffset = 0 for bottom, +64 for top)
+static void drawBitcoinRow(int bandOffset) {
   MD_MAX72XX* mx = P.getGraphicObject();
   if (!mx) return;
 
-  const int modules = ROW_COLS / 8;    // how many 8-col modules per row
+  const int modules = ROW_COLS / 8;    // 8 devices per band
   for (int m = 0; m < modules; m++) {
-    int c0 = m * 8;  // leftmost column of this 8-col module
+    int c0 = bandOffset + m * 8;       // absolute left column of this 8-col module
 
-    // same pattern as your original ₿ layout, just offset by c0 and rowBase
-    mx->setPoint(rowBase + 0, c0 + 4, true);
-    mx->setPoint(rowBase + 0, c0 + 2, true);
+    // same ₿ pattern as original
+    mx->setPoint(0, c0 + 4, true); mx->setPoint(0, c0 + 2, true);
 
-    mx->setPoint(rowBase + 1, c0 + 5, true);
-    mx->setPoint(rowBase + 1, c0 + 4, true);
-    mx->setPoint(rowBase + 1, c0 + 3, true);
-    mx->setPoint(rowBase + 1, c0 + 2, true);
+    mx->setPoint(1, c0 + 5, true); mx->setPoint(1, c0 + 4, true);
+    mx->setPoint(1, c0 + 3, true); mx->setPoint(1, c0 + 2, true);
 
-    mx->setPoint(rowBase + 2, c0 + 5, true);
-    mx->setPoint(rowBase + 2, c0 + 1, true);
+    mx->setPoint(2, c0 + 5, true); mx->setPoint(2, c0 + 1, true);
 
-    mx->setPoint(rowBase + 3, c0 + 5, true);
-    mx->setPoint(rowBase + 3, c0 + 4, true);
-    mx->setPoint(rowBase + 3, c0 + 3, true);
-    mx->setPoint(rowBase + 3, c0 + 2, true);
+    mx->setPoint(3, c0 + 5, true); mx->setPoint(3, c0 + 4, true);
+    mx->setPoint(3, c0 + 3, true); mx->setPoint(3, c0 + 2, true);
 
-    mx->setPoint(rowBase + 4, c0 + 5, true);
-    mx->setPoint(rowBase + 4, c0 + 1, true);
+    mx->setPoint(4, c0 + 5, true); mx->setPoint(4, c0 + 1, true);
 
-    mx->setPoint(rowBase + 5, c0 + 5, true);
-    mx->setPoint(rowBase + 5, c0 + 4, true);
-    mx->setPoint(rowBase + 5, c0 + 3, true);
-    mx->setPoint(rowBase + 5, c0 + 2, true);
+    mx->setPoint(5, c0 + 5, true); mx->setPoint(5, c0 + 4, true);
+    mx->setPoint(5, c0 + 3, true); mx->setPoint(5, c0 + 2, true);
 
-    mx->setPoint(rowBase + 6, c0 + 4, true);
-    mx->setPoint(rowBase + 6, c0 + 2, true);
+    mx->setPoint(6, c0 + 4, true); mx->setPoint(6, c0 + 2, true);
   }
 }
 
 
 static void pacmanInit() {
-  pacmanStep = 0;
+  pacmanStep = -PAC_W;          // off-screen entry so ₿ are visible first
   pacFrame = 0;
   pacDir = +1;
   pacmanNextFrameAt = 0;
   prevCol0 = -1000;
-  P.displaySuspend(true);   // pause Parola; we’ll draw directly to the matrix
+  prevBandOffset = 0;
+  pacBand = 0;
+  P.displaySuspend(true);
   P.displayClear();
-
-  
-  // lay down the Bitcoin Symbol as the background on BOTH bands now
-  drawBitcoinRow(0);   // top 8 rows
-  drawBitcoinRow(8);   // bottom 8 rows
-  
+  drawBitcoinRow(0);            // bottom band once
+  drawBitcoinRow(TOP_OFFSET);   // top band once
 }
 
-// Returns true while animating; false when finished both rows
+
+
+
+// Dual-row Pac-Man: bottom L->R, then top R->L
 static bool pacmanFrame() {
   if (millis() < pacmanNextFrameAt) return true;
   pacmanNextFrameAt = millis() + PAC_FRAME_MS;
 
-  // Phase: 0..ROW_COLS-1 = TOP row, ROW_COLS..2*ROW_COLS-1 = BOTTOM row
-  bool topPhase  = (pacmanStep < ROW_COLS);
-  int  stepInRow = topPhase ? pacmanStep : (pacmanStep - ROW_COLS);
+  static bool topRowStarted = false;
 
-  // LEFT → RIGHT motion: sprite's left edge at col0
-  int rowBase = topPhase ? 0 : 8;   // 8-pixel tall bands
-  int col0    = stepInRow;          // 0 .. ROW_COLS-1
-  // If your panel runs right→left instead, use:
-  // int col0 = (ROW_COLS - PAC_W) - stepInRow;
+  int bandOffset = (pacBand == 0) ? 0 : TOP_OFFSET;
+  // bottom L->R from -PAC_W; top R->L from off-screen right
+  int col0 = (pacBand == 0) ? pacmanStep : (ROW_COLS - PAC_W) - pacmanStep;
 
-  // draw current frame (also erases the previous one)
-  pacmanDrawFrame(rowBase, col0);
+  if (pacBand == 1 && !topRowStarted) {
+    // Before starting top row, redraw all Bitcoin symbols and reset state
+    P.displayClear();
+    drawBitcoinRow(TOP_OFFSET);
+    pacmanStep = -PAC_W;
+    pacFrame = 0;
+    pacDir = -1;
+    prevCol0 = -1000;
+    prevBandOffset = TOP_OFFSET;
+    topRowStarted = true;
+    return true;
+  }
 
-  // mouth/eyes ping-pong 0..3..0
+  if (pacBand == 0) topRowStarted = false;
+
+  // first-visible guard: don’t erase before we’ve drawn anything on-screen
+  if (prevCol0 < 0 && col0 >= 0) prevCol0 = -1000;
+
+  pacmanDrawFrame(bandOffset, col0);
+
   pacFrame += pacDir;
   if (pacFrame == 0 || pacFrame == 3) pacDir = -pacDir;
 
   pacmanStep++;
-  if (pacmanStep >= ROW_COLS * 2) {
-    // Done — clear last, resume Parola/rotation
-    if (prevCol0 > -1000) drawSpriteBits(prevRowBase, prevCol0, PACMAN_FRAMES[pacFrame], PAC_W, false);
+
+  // Done with this band?
+  if (pacmanStep >= ROW_COLS) {
     prevCol0 = -1000;
-    P.displayClear();
-    P.displaySuspend(false);
-    P.synchZoneStart();
-    return false;
+    pacmanStep = -PAC_W;
+    if (pacBand == 0) {
+      // Switch to top band, reset state and direction
+      pacBand = 1;
+      // topRowStarted will trigger redraw and reset on next frame
+    } else {
+      // Animation done
+      pacBand = 0;
+      topRowStarted = false;
+      P.displayClear();
+      P.displaySuspend(false);
+      P.synchZoneStart();
+      return false;
+    }
   }
   return true;
 }
 
 
+
+
+
+/*
+  // ----- Phase 1: top band (rowBase=8), LEFT -> RIGHT -----
+  {
+    int rowBase   = 8;                 // top band
+    int stepInRow = pacmanStep;        // 0..ROW_COLS-1
+    int col0      = stepInRow;         // L->R
+
+    pacmanDrawFrame(rowBase, col0);
+
+    pacFrame += pacDir;
+    if (pacFrame == 0 || pacFrame == 3) pacDir = -pacDir;
+
+    pacmanStep++;
+    if (pacmanStep >= ROW_COLS) {
+      // all done — clean down and hand back to rotation
+      if (prevCol0 > -1000) {
+        drawSpriteBits(rowBase, prevCol0, PACMAN_FRAMES[pacFrame], PAC_W, false);
+      }
+      prevCol0 = -1000;
+      P.displayClear();
+      P.displaySuspend(false);
+      P.synchZoneStart();
+      return false;         // finished animation
+    }
+    return true;            // still animating
+  }
+}
+
+
+*/
 
 
 //LOOP
@@ -970,12 +1030,13 @@ static bool pacmanFrame() {
 
       // If Pac-Man mode is active, run frames and skip normal rotation
 if (uiMode == MODE_PACMAN) {
-  P.displayAnimate();           // keep display timing alive
+  // Do NOT call P.displayAnimate() while suspended; we draw directly via MD_MAX72XX.
   if (!pacmanFrame()) {
     uiMode = MODE_ROTATION;     // finished: hand back to rotation
   }
   return;                       // skip the rest of loop this tick
 }
+
 
 
 
@@ -992,139 +1053,6 @@ if (lastButtonState == HIGH && currentButtonState == LOW) {
 lastButtonState = currentButtonState;
 
 
-/*
-// THIS IS FOR A WEIGHTED ROLL , uncomment and comment out 
-// 🚀 If button triggered, show SMASH BUY animation
-if (buttonPressed) {
-  buttonPressed = false;
-
-  int roll = random(100);  // 0 to 99
-
-  P.displayClear();
-
-  if (roll < 60) {
-    // 60% chance - Try Again
-    P.displayZoneText(1, "TRY", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    P.displayZoneText(0, "AGAIN", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    while (!P.displayAnimate()) {
-      esp_task_wdt_reset();
-      delay(10);
-    }
-
-    P.displayClear();
-    P.displayZoneText(1, "BETTER", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    P.displayZoneText(0, "LUCK", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    while (!P.displayAnimate()) {
-      esp_task_wdt_reset();
-      delay(10);
-    }
-
-    P.displayClear();
-    P.displayZoneText(1, "NEXT", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    P.displayZoneText(0, "TIME", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    while (!P.displayAnimate()) {
-      esp_task_wdt_reset();
-      delay(10);
-    }
-
-    Serial.println("🎯 Result: Try Again");
-  }
-  else if (roll < 80) {
-    // 20% chance - Free Pin
-    P.displayZoneText(1, "FREE", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    P.displayZoneText(0, "PIN", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    while (!P.displayAnimate()) {
-      esp_task_wdt_reset();
-      delay(10);
-    }
-    Serial.println("🎯 Result: Free Pin");
-  }
-  else if (roll < 90) {
-    // 10% chance - 1000 SATS
-    P.displayZoneText(1, "1000", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    P.displayZoneText(0, "SATS", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    while (!P.displayAnimate()) {
-      esp_task_wdt_reset();
-      delay(10);
-    }
-    Serial.println("🎯 Result: 1000 SATS");
-  }
-  else {
-    // 10% chance - 2000 SATS
-    P.displayZoneText(1, "2000", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    P.displayZoneText(0, "SATS", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    while (!P.displayAnimate()) {
-      esp_task_wdt_reset();
-      delay(10);
-    }
-    Serial.println("🎯 Result: 2000 SATS");
-  }
-
-  P.displayClear();
-  P.synchZoneStart();
-}
-
-*/
-
-
-/*
-// USED FOR SIMPLE CLEAN MESSAGE
-if (buttonPressed) {
-  buttonPressed = false;
-
-P.displayClear();  //Change text to what you wouldl like when button pushed
-P.displayZoneText(1, "SMASH",    PA_CENTER, 0, 2000, PA_FADE, PA_FADE); 
-P.displayZoneText(0, "BUY!",     PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-
-// Let the animation finish while feeding the watchdog
-while (!P.displayAnimate()) {
-  esp_task_wdt_reset();
-  delay(10);
-}
-
-P.displayClear();
-P.synchZoneStart();
-Serial.println("🎯 Smash Buy: SMASH BUY!");
-}
-
-*/
-
-
-/*
-// USED FOR RANDOM PHRASES
-if (buttonPressed) {
-  buttonPressed = false;  // consume the event so it fires once
-
-int idx = random(NUM_PHRASES);
-const char* topLine    = PHRASES[idx][0];
-const char* bottomLine = PHRASES[idx][1];
-
-// Optional: small press lockout to avoid double-fires on long press/bounce
-static unsigned long pressLockUntil = 0;
-if (millis() < pressLockUntil) return;
-pressLockUntil = millis() + 600; // 0.6s cooldown
-
-// Show the message (nice and clean fade). Use your zone IDs as you already do.
-// If you prefer, you can show the same phrase on both lines for impact.
-P.displayClear();
-P.displayZoneText(1, topLine,    PA_CENTER, 0, 2500, PA_FADE, PA_FADE);
-P.displayZoneText(0, bottomLine, PA_CENTER, 0, 2500, PA_FADE, PA_FADE);
-
-// Let the animation finish while keeping WDT happy (ESP32)
-while (!P.displayAnimate()) {
-  esp_task_wdt_reset();
-  delay(10);
-}
-
-P.displayClear();
-P.synchZoneStart();
-Serial.print("🎯 Smash Buy: ");
-Serial.print(topLine);
-Serial.print(" / ");
-Serial.println(bottomLine);
-
-}
-*/
 // ── Smash-Buy: trigger Pac-Man animation
 if (buttonPressed) {
   buttonPressed = false;                 // consume the event
@@ -1135,6 +1063,15 @@ if (buttonPressed) {
     // ignore long-press repeats but keep loop running
   } else {
     pressLockUntil = millis() + 600;     // 0.6s lockout
+
+    // 1) Splash first (Parola active)
+    P.displayClear();
+    P.displayZoneText(ZONE_UPPER, "SMASH", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+    P.displayZoneText(ZONE_LOWER, "BUY!",  PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+    while (!P.displayAnimate()) { esp_task_wdt_reset(); delay(10); }
+    P.displayClear();
+
+    // 2) Then start Pac-Man (both rows via pacBand phases)   
     uiMode = MODE_PACMAN;
     pacmanInit();
     Serial.println("🎮 Pac-Man animation starting…");
