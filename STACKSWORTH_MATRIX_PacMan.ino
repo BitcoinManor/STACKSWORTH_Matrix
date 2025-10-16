@@ -4,6 +4,7 @@
 #include <SPI.h>
 #include <WiFiManager.h>
 #include <HTTPClient.h>
+#include <WiFiClient.h>
 #include <ArduinoJson.h>
 #include "esp_task_wdt.h"
 #include "Font_Data.h" // Optional, if using custom fonts
@@ -49,6 +50,8 @@ uint8_t displayCycle = 0; // 👈 for rotating which screen we show
 
 // initializes the server so we can later attach our custom HTML page routes
 AsyncWebServer server(80);
+
+static WiFiClient httpClient;
 
 // 🌍 API Endpoints
 const char* BTC_API = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true";
@@ -477,32 +480,51 @@ void loadSavedSettingsAndConnect() {
 
 */
 
-    void fetchFeeRate()
-    {
-      if (ESP.getFreeHeap() < 160000)
-      {
-        Serial.println("❌ Not enough heap to safely fetch. Skipping BTC fetch.");
-        return;
-      }
-      Serial.println("🔄 Fetching Fee Rate...");
-      HTTPClient http;
-      http.begin(FEES_API);
-      if (http.GET() == 200)
-      {
-        DynamicJsonDocument doc(512);
-        deserializeJson(doc, http.getString());
-        feeRate = doc["fastestFee"];
-        sprintf(feeText, "%d sat/vB", feeRate);
-        Serial.printf("✅ Updated Fee Rate: %d sat/vB\n", feeRate);
-        Serial.printf("✅ Fee Rate: %s\n", feeText);
-      }
-      else
-      {
-        Serial.println("❌ Failed to fetch Fee Rate");
-      }
-      http.end();
-      Serial.printf("📈 Free heap after fetch: %d bytes\n", ESP.getFreeHeap());
+    void fetchFeeRate() {
+  if (heap_caps_get_free_size(MALLOC_CAP_DEFAULT) < 160 * 1024) {
+    Serial.println("🛑 Low heap before Fee fetch; skipping");
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("🌐 WiFi not connected; skipping Fee fetch");
+    return;
+  }
+
+  Serial.println("🔄 Fetching Fee Rate…");
+  HTTPClient http;
+  // short, explicit timeouts so we never stall long enough to trip WDT
+  http.setTimeout(3000);         // total I/O timeout ~3s
+  http.setConnectTimeout(2000);  // TCP connect timeout ~2s
+  http.useHTTP10(true);          // simpler, avoids chunking issues
+  http.setReuse(false);          // no keep-alive reuse
+
+  // FEES_API should be your existing endpoint string, unchanged
+  if (!http.begin(httpClient, FEES_API)) {
+    Serial.println("❌ http.begin failed; keeping last fee value");
+    return;
+  }
+
+  int rc = http.GET();
+  if (rc == 200) {
+    String payload = http.getString();
+    DynamicJsonDocument doc(512);
+    DeserializationError e = deserializeJson(doc, payload);
+    if (e) {
+      Serial.printf("❌ Fee JSON parse error: %s; keeping last value\n", e.c_str());
+    } else {
+      // keep previous value if field missing
+      int newFee = doc["fastestFee"] | feeRate;
+      feeRate = newFee;
+      // feeText should be your existing global char buffer
+      snprintf(feeText, sizeof(feeText), "%d sat/vB", feeRate);
+      Serial.printf("✅ Updated Fee Rate: %d sat/vB\n", feeRate);
     }
+  } else {
+    Serial.printf("❌ Fee GET failed (%d); keeping last value\n", rc);
+  }
+  http.end();
+}
+
 
     void fetchTime()
     {
