@@ -240,6 +240,18 @@ const unsigned long WEATHER_UPDATE_INTERVAL = 30UL * 60UL * 1000UL; // 30 minute
 const unsigned long NTP_UPDATE_INTERVAL = 10UL * 60UL * 1000UL;     // 10 minutes
 const unsigned long MEMORY_CHECK_INTERVAL = 5UL * 60UL * 1000UL;    // 5 minutes
 
+const uint32_t BTC_INTERVAL     = 300000;   // 5 min
+const uint32_t FEE_INTERVAL     = 300000;   // 5 min
+const uint32_t BLOCK_INTERVAL   = 300000;   // 5 min
+const uint32_t WEATHER_INTERVAL = 1800000;  // 30 min
+
+const uint32_t FEE_OFFSET     =  90000;   // +1.5 min after BTC
+const uint32_t BLOCK_OFFSET   = 180000;   // +3   min after BTC
+const uint32_t WEATHER_OFFSET =  60000;   // +1   min after BTC
+
+static uint32_t lastBTC = 0, lastFee = 0, lastBlock = 0, lastWeather = 0;
+static uint32_t bootMs = 0;
+
 // Pre Connection Message for home users
 void showPreConnectionMessage()
 {
@@ -815,6 +827,8 @@ void loadSavedSettingsAndConnect() {
       Serial.println("🌍 Async Web server started");
       delay(2000); // 🕒 Let server stabilize after starting
 
+      bootMs = millis();
+
       // Initial API Fetch
       Serial.println("🌍 Fetching initial data...");
       fetchBitcoinData();
@@ -1131,6 +1145,34 @@ if (buttonPressed) {
         lastTimeFetch = currentMillis;
       }
 
+         // ── HTTP scheduler: serialize network calls to avoid overlap
+if (WiFi.status() == WL_CONNECTED) {
+  uint32_t now = millis();
+
+  // 1) BTC every BTC_INTERVAL
+  if (now - lastBTC >= BTC_INTERVAL) {
+    fetchBitcoinData();
+    lastBTC = now;
+  }
+  // 2) Fee at +offset
+  else if ((now - lastFee >= (FEE_INTERVAL + FEE_OFFSET)) && (now >= bootMs + FEE_OFFSET)) {
+    fetchFeeRate();
+    lastFee = now;
+  }
+  // 3) Block height at +offset
+  else if ((now - lastBlock >= (BLOCK_INTERVAL + BLOCK_OFFSET)) && (now >= bootMs + BLOCK_OFFSET)) {
+    fetchBlockHeight();
+    lastBlock = now;
+  }
+  // 4) Weather seldom, with a small offset
+  else if ((now - lastWeather >= (WEATHER_INTERVAL + WEATHER_OFFSET)) && (now >= bootMs + WEATHER_OFFSET)) {
+    fetchWeather();
+    lastWeather = now;
+  }
+}
+
+      
+/*
       // 🌦️ Fetch Weather every 30 minutes
       static unsigned long lastWeatherFetch = 0;
       if (currentMillis - lastWeatherFetch >= 1800000)
@@ -1155,7 +1197,7 @@ if (buttonPressed) {
         fetchBlockHeight();
         lastBlockHeightFetch = currentMillis;
       }
-
+*/
 
       // 🖥️ Rotate screens
   if (P.displayAnimate()) {
