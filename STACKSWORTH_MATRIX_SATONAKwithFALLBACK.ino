@@ -371,7 +371,7 @@ bool fetchPriceFromSatoNak() {
   http.setReuse(false);
 
   // Reuse your global client declared at top:  static WiFiClient httpClient;
-  if (!http.begin(httpClient, full)) {
+  if (!http.begin(full)) {
     Serial.println("❌ http.begin failed (SatoNak)");
     return false;
   }
