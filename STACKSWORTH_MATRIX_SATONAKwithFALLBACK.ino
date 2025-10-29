@@ -64,9 +64,9 @@ const char *BLOCKSTREAM_TX_API_BASE = "https://blockstream.info/api/block/";
 #define USE_SATONAK_PRICE 1    // 1 = use SatoNak for price, 0 = keep old source
 
 static const char* SATONAK_BASE   = "https://satonak.bitcoinmanor.com";
-static const char* SATONAK_PRICE  = "/v1/price";   // supports ?fiat=EUR etc.
-static const char* SATONAK_BLOCKS = "/v1/blocks";  // (for later)
-static const char* SATONAK_MINER  = "/v1/miner";   // (for later)
+static const char* SATONAK_PRICE  = "/api/price";   // supports ?fiat=EUR etc.
+static const char* SATONAK_HEIGHT = "/api/height";  // (for later)
+static const char* SATONAK_MINER  = "/api/miner";   // (for later)
 
 // default fiat (can be "USD", "EUR", etc.)
 static const char* FIAT_CODE = "USD";
@@ -1009,7 +1009,18 @@ if (WiFi.status() == WL_CONNECTED) {
         P.synchZoneStart(); // Force synchronization
         break;
 
+
      case 1:
+        Serial.println("🖥️ Displaying MINED BY screen...");
+        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MINED BY", minerName.c_str());
+        P.displayZoneText(ZONE_UPPER, "MINED BY", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_FADE);
+        P.displayZoneText(ZONE_LOWER, minerName.c_str(), PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_FADE);
+        P.displayClear(); //  Force clear
+        P.synchZoneStart(); // Force synchronization
+        break; 
+
+        
+     case 2:
         Serial.println("🖥️ Displaying USD PRICE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "USD PRICE", btcText);
         P.displayZoneText(ZONE_UPPER, "USD PRICE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1017,7 +1028,7 @@ if (WiFi.status() == WL_CONNECTED) {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;   
-     case 2:
+     case 3:
         Serial.println("🖥️ Displaying 24H CHANGE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "24H CHANGE", changeText);
         P.displayZoneText(ZONE_UPPER, "24H CHANGE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1026,7 +1037,7 @@ if (WiFi.status() == WL_CONNECTED) {
         P.synchZoneStart();
         break;
 
-      case 3:
+      case 4:
         Serial.println("🖥️ Displaying SATS/$ screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText);
         P.displayZoneText(ZONE_UPPER, "SATS/USD", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1035,7 +1046,7 @@ if (WiFi.status() == WL_CONNECTED) {
         P.synchZoneStart(); // Force synchronization  
         break;
 
-      case 4:
+      case 5:
         Serial.println("🖥️ Displaying MOSCOW TIME screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText);
         P.displayZoneText(ZONE_UPPER, "MOSCOW TIME", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1044,7 +1055,7 @@ if (WiFi.status() == WL_CONNECTED) {
         P.synchZoneStart(); // Force synchronization  
         break;
         
-      case 5:
+      case 6:
         Serial.println("🖥️ Displaying FEE RATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "FEE RATE", feeText);
         P.displayZoneText(ZONE_UPPER, "FEE RATE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1052,7 +1063,7 @@ if (WiFi.status() == WL_CONNECTED) {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
-      case 6:
+      case 7:
         Serial.println("🖥️ Displaying TIME screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "TIME", timeText);
         P.displayZoneText(ZONE_UPPER, savedCity.c_str(), PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1060,7 +1071,7 @@ if (WiFi.status() == WL_CONNECTED) {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
-      case 7:
+      case 8:
         Serial.println("🖥️ Displaying DAY/DATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", dayText, dateText);
         P.displayZoneText(ZONE_UPPER, dayText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1068,7 +1079,7 @@ if (WiFi.status() == WL_CONNECTED) {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
-      case 8: {
+      case 9: {
         Serial.println("🖥️ Displaying WEATHER screen...");
         static char tempDisplay[16];
         snprintf(tempDisplay, sizeof(tempDisplay), (temperature >= 0) ? "+%dC" : "%dC", temperature);
@@ -1088,7 +1099,7 @@ if (WiFi.status() == WL_CONNECTED) {
         break;
       }
 
-      case 9:// This is for the models we ship but can be changed for custom units
+      case 10:// This is for the models we ship but can be changed for custom units
         P.displayZoneText(ZONE_UPPER, "CRYPTO", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
         P.displayZoneText(ZONE_LOWER, "CLOAKS", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
         P.displayClear();
@@ -1097,7 +1108,7 @@ if (WiFi.status() == WL_CONNECTED) {
     }
 
       Serial.println("✅ Screen update complete.");
-      displayCycle = (displayCycle + 1) % 10;
+      displayCycle = (displayCycle + 1) % 11;
       P.displayClear();
       P.synchZoneStart();
     }
