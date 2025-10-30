@@ -488,14 +488,71 @@ bool fetchMinerFromSatoNak() {
   }
 }
 
+// Fetch block height from SatoNak API
+bool fetchHeightFromSatoNak() {
+  if (ESP.getFreeHeap() < 160000) {
+    Serial.println("❌ Low heap; skipping SatoNak height fetch");
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("🌐 WiFi not connected; skipping SatoNak height fetch");
+    return false;
+  }
+
+  String full = String(SATONAK_BASE) + String(SATONAK_HEIGHT);
+  Serial.print("🌐 GET "); Serial.println(full);
+
+  HTTPClient http;
+  http.setTimeout(4000);
+  http.setConnectTimeout(2500);
+  http.useHTTP10(true);
+  http.setReuse(false);
+
+  if (!http.begin(full)) {
+    Serial.println("❌ http.begin failed (SatoNak height)");
+    return false;
+  }
+
+  int rc = http.GET();
+  if (rc != 200) {
+    Serial.printf("❌ SatoNak height GET failed (%d)\n", rc);
+    http.end();
+    return false;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  // For simple text response, parse as integer
+  payload.trim();
+  int newHeight = payload.toInt();
+  if (newHeight > 0 && newHeight > blockHeight - 100) { // sanity check
+    blockHeight = newHeight;
+    sprintf(blockText, "%d", blockHeight);
+    Serial.printf("✅ SatoNak Height: %d | Free heap: %d\n", blockHeight, ESP.getFreeHeap());
+    return true;
+  } else {
+    Serial.println("❌ SatoNak height: invalid response");
+    Serial.println("↪︎ Payload: " + payload.substring(0, 50));
+    return false;
+  }
+}
+
 
     void fetchBlockHeight()
     {
       if (ESP.getFreeHeap() < 160000)
       {
-        Serial.println("❌ Not enough heap to safely fetch. Skipping BTC fetch.");
+        Serial.println("❌ Not enough heap to safely fetch. Skipping block height fetch.");
         return;
       }
+      
+      // Try SatoNak first, fallback to blockchain.info if needed
+      if (fetchHeightFromSatoNak()) {
+        return; // Success with SatoNak
+      }
+      
+      Serial.println("↪︎ Fallback to blockchain.info for block height...");
       Serial.println("🔄 Fetching Block Height...");
       HTTPClient http;
       http.begin(BLOCK_API);
@@ -1051,7 +1108,7 @@ if (WiFi.status() == WL_CONNECTED) {
 */
 
 
-      // 🖥️ Rotate screens
+       // 🖥️ Rotate screens
   if (P.displayAnimate()) {
     Serial.print("🖥️ Displaying screen: ");
     Serial.println(displayCycle);
@@ -1102,17 +1159,8 @@ if (WiFi.status() == WL_CONNECTED) {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization  
         break;
-
-      case 5:
-        Serial.println("🖥️ Displaying MOSCOW TIME screen...");
-        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText);
-        P.displayZoneText(ZONE_UPPER, "MOSCOW TIME", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, satsText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayClear(); //  Force clear
-        P.synchZoneStart(); // Force synchronization  
-        break;
         
-      case 6:
+      case 5:
         Serial.println("🖥️ Displaying FEE RATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "FEE RATE", feeText);
         P.displayZoneText(ZONE_UPPER, "FEE RATE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1120,7 +1168,8 @@ if (WiFi.status() == WL_CONNECTED) {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
-      case 7:
+        
+      case 6:
         Serial.println("🖥️ Displaying TIME screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "TIME", timeText);
         P.displayZoneText(ZONE_UPPER, savedCity.c_str(), PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1128,7 +1177,8 @@ if (WiFi.status() == WL_CONNECTED) {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
-      case 8:
+        
+      case 7:
         Serial.println("🖥️ Displaying DAY/DATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", dayText, dateText);
         P.displayZoneText(ZONE_UPPER, dayText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1136,7 +1186,8 @@ if (WiFi.status() == WL_CONNECTED) {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
-      case 9: {
+        
+      case 8: {
         Serial.println("🖥️ Displaying WEATHER screen...");
         static char tempDisplay[16];
         snprintf(tempDisplay, sizeof(tempDisplay), (temperature >= 0) ? "+%dC" : "%dC", temperature);
@@ -1155,6 +1206,16 @@ if (WiFi.status() == WL_CONNECTED) {
         P.synchZoneStart(); // Force synchronization
         break;
       }
+
+      case 9:
+        Serial.println("🖥️ Displaying MOSCOW TIME screen...");
+        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText);
+        P.displayZoneText(ZONE_UPPER, "MOSCOW TIME", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_LOWER, satsText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayClear(); //  Force clear
+        P.synchZoneStart(); // Force synchronization  
+        break;
+      
 
       case 10:// This is for the models we ship but can be changed for custom units
         P.displayZoneText(ZONE_UPPER, "CRYPTO", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
