@@ -146,6 +146,7 @@ String weatherCondition = "Unknown";
 int temperature = 0;
 float btcChange24h = 0.0;
 char changeText[16];
+String minerName = "Unknown";
 
 String formatWithCommas(int number)
 {
@@ -193,13 +194,15 @@ const unsigned long MEMORY_CHECK_INTERVAL = 5UL * 60UL * 1000UL;    // 5 minutes
 const uint32_t BTC_INTERVAL     = 300000;   // 5 min
 const uint32_t FEE_INTERVAL     = 300000;   // 5 min
 const uint32_t BLOCK_INTERVAL   = 300000;   // 5 min
+const uint32_t MINER_INTERVAL   = 300000;   // 5 min
 const uint32_t WEATHER_INTERVAL = 1800000;  // 30 min
 
 const uint32_t FEE_OFFSET     =  90000;   // +1.5 min after BTC
 const uint32_t BLOCK_OFFSET   = 180000;   // +3   min after BTC
+const uint32_t MINER_OFFSET   = 270000;   // +4.5 min after BTC
 const uint32_t WEATHER_OFFSET =  60000;   // +1   min after BTC
 
-static uint32_t lastBTC = 0, lastFee = 0, lastBlock = 0, lastWeather = 0;
+static uint32_t lastBTC = 0, lastFee = 0, lastBlock = 0, lastMiner = 0, lastWeather = 0;
 static uint32_t bootMs = 0;
 
 
@@ -435,6 +438,54 @@ bool fetchPriceFromSatoNak() {
   Serial.printf("✅ SatoNak Price: %s | 24h: %+.2f%% | Sats/$: %d | Free heap: %d\n",
                 btcText, btcChange24h, satsPerDollar, ESP.getFreeHeap());
   return true;
+}
+
+// Fetch miner info from SatoNak API
+bool fetchMinerFromSatoNak() {
+  if (ESP.getFreeHeap() < 160000) {
+    Serial.println("❌ Low heap; skipping SatoNak miner fetch");
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("🌐 WiFi not connected; skipping SatoNak miner fetch");
+    return false;
+  }
+
+  String full = String(SATONAK_BASE) + String(SATONAK_MINER);
+  Serial.print("🌐 GET "); Serial.println(full);
+
+  HTTPClient http;
+  http.setTimeout(4000);
+  http.setConnectTimeout(2500);
+  http.useHTTP10(true);
+  http.setReuse(false);
+
+  if (!http.begin(full)) {
+    Serial.println("❌ http.begin failed (SatoNak miner)");
+    return false;
+  }
+
+  int rc = http.GET();
+  if (rc != 200) {
+    Serial.printf("❌ SatoNak miner GET failed (%d)\n", rc);
+    http.end();
+    return false;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  // For simple text response, just use the payload directly
+  payload.trim();
+  if (payload.length() > 0 && payload.length() < 32) {
+    minerName = payload;
+    Serial.printf("✅ SatoNak Miner: %s | Free heap: %d\n", minerName.c_str(), ESP.getFreeHeap());
+    return true;
+  } else {
+    Serial.println("❌ SatoNak miner: invalid response");
+    Serial.println("↪︎ Payload: " + payload.substring(0, 100));
+    return false;
+  }
 }
 
 
@@ -809,6 +860,7 @@ bool fetchPriceFromSatoNak() {
       #endif
       fetchBlockHeight();
       fetchFeeRate();
+      fetchMinerFromSatoNak();
       fetchTime();
       fetchLatLonFromCity();
       fetchWeather();
@@ -957,7 +1009,12 @@ if (WiFi.status() == WL_CONNECTED) {
     fetchBlockHeight();
     lastBlock = now;
   }
-  // 4) Weather seldom, with a small offset
+  // 4) Miner at +offset (no fallback)
+  else if ((now - lastMiner >= (MINER_INTERVAL + MINER_OFFSET)) && (now >= bootMs + MINER_OFFSET)) {
+    fetchMinerFromSatoNak();
+    lastMiner = now;
+  }
+  // 5) Weather seldom, with a small offset
   else if ((now - lastWeather >= (WEATHER_INTERVAL + WEATHER_OFFSET)) && (now >= bootMs + WEATHER_OFFSET)) {
     fetchWeather();
     lastWeather = now;
