@@ -162,6 +162,26 @@ String formatWithCommas(int number)
   return result;
 }
 
+// Function to set brightness for both zones
+void setBrightness(int level) {
+  brightnessLevel = constrain(level, 0, 15); // Ensure valid range
+  P.setIntensity(ZONE_LOWER, brightnessLevel);
+  P.setIntensity(ZONE_UPPER, brightnessLevel);
+  Serial.printf("💡 Brightness set to %d for both zones\n", brightnessLevel);
+}
+
+// Function to check and fix zone brightness consistency
+void checkZoneBrightness() {
+  // Get current intensity for debugging
+  Serial.printf("🔍 Zone brightness check - Lower: attempting to read, Upper: attempting to read\n");
+  
+  // Force both zones to same brightness
+  P.setIntensity(ZONE_LOWER, brightnessLevel);
+  P.setIntensity(ZONE_UPPER, brightnessLevel);
+  
+  Serial.printf("🔧 Forced both zones to brightness %d\n", brightnessLevel);
+}
+
 // LED Matrix Config
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
 #define MAX_ZONES 2
@@ -179,7 +199,7 @@ String formatWithCommas(int number)
 #define BUTTON_PIN 25   //Pin for Smash Buy Button
 
 MD_Parola P = MD_Parola(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
-// int brightnessLevel = 6;  // 0 = dimmest, 15 = brightest
+int brightnessLevel = 8;  // 0 = dimmest, 15 = brightest
 unsigned long lastFetchTime = 0;
 uint8_t cycle = 0;             // 🔥 Needed for animation control
 unsigned long lastApiCall = 0; // 🔥 Needed for fetch timing
@@ -812,7 +832,11 @@ bool fetchHeightFromSatoNak() {
       P.setZone(ZONE_LOWER, 0, ZONE_SIZE - 1);
       P.setZone(ZONE_UPPER, ZONE_SIZE, MAX_DEVICES - 1);
       P.setFont(nullptr);
-      // P.setIntensity(brightnessLevel);
+      
+      // Set brightness for both zones explicitly
+      P.setIntensity(ZONE_LOWER, brightnessLevel);
+      P.setIntensity(ZONE_UPPER, brightnessLevel);
+      Serial.printf("💡 Set brightness to %d for both zones\n", brightnessLevel);
 
       // Show Welcome Loop
       if (!wifiConnected)
@@ -1022,6 +1046,14 @@ Serial.println(bottomLine);
         lastMemoryCheck = currentMillis;
       }
 
+      // 🔆 Check zone brightness consistency every 2 minutes
+      static unsigned long lastBrightnessCheck = 0;
+      if (currentMillis - lastBrightnessCheck >= 120000)
+      {
+        checkZoneBrightness();
+        lastBrightnessCheck = currentMillis;
+      }
+
       // 🚨 Auto-reboot if heap drops too low
       if (ESP.getFreeHeap() < 140000)
       {
@@ -1108,7 +1140,7 @@ if (WiFi.status() == WL_CONNECTED) {
 */
 
 
-       // 🖥️ Rotate screens
+      // 🖥️ Rotate screens
   if (P.displayAnimate()) {
     Serial.print("🖥️ Displaying screen: ");
     Serial.println(displayCycle);
@@ -1159,8 +1191,17 @@ if (WiFi.status() == WL_CONNECTED) {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization  
         break;
-        
+
       case 5:
+        Serial.println("🖥️ Displaying MOSCOW TIME screen...");
+        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText);
+        P.displayZoneText(ZONE_UPPER, "MOSCOW TIME", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_LOWER, satsText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayClear(); //  Force clear
+        P.synchZoneStart(); // Force synchronization  
+        break;
+        
+      case 6:
         Serial.println("🖥️ Displaying FEE RATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "FEE RATE", feeText);
         P.displayZoneText(ZONE_UPPER, "FEE RATE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1168,8 +1209,7 @@ if (WiFi.status() == WL_CONNECTED) {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
-        
-      case 6:
+      case 7:
         Serial.println("🖥️ Displaying TIME screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "TIME", timeText);
         P.displayZoneText(ZONE_UPPER, savedCity.c_str(), PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1177,8 +1217,7 @@ if (WiFi.status() == WL_CONNECTED) {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
-        
-      case 7:
+      case 8:
         Serial.println("🖥️ Displaying DAY/DATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", dayText, dateText);
         P.displayZoneText(ZONE_UPPER, dayText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1186,8 +1225,7 @@ if (WiFi.status() == WL_CONNECTED) {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
-        
-      case 8: {
+      case 9: {
         Serial.println("🖥️ Displaying WEATHER screen...");
         static char tempDisplay[16];
         snprintf(tempDisplay, sizeof(tempDisplay), (temperature >= 0) ? "+%dC" : "%dC", temperature);
@@ -1206,16 +1244,6 @@ if (WiFi.status() == WL_CONNECTED) {
         P.synchZoneStart(); // Force synchronization
         break;
       }
-
-      case 9:
-        Serial.println("🖥️ Displaying MOSCOW TIME screen...");
-        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText);
-        P.displayZoneText(ZONE_UPPER, "MOSCOW TIME", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, satsText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayClear(); //  Force clear
-        P.synchZoneStart(); // Force synchronization  
-        break;
-      
 
       case 10:// This is for the models we ship but can be changed for custom units
         P.displayZoneText(ZONE_UPPER, "CRYPTO", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
