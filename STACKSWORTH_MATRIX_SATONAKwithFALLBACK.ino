@@ -162,26 +162,6 @@ String formatWithCommas(int number)
   return result;
 }
 
-// Function to set brightness for both zones
-void setBrightness(int level) {
-  brightnessLevel = constrain(level, 0, 15); // Ensure valid range
-  P.setIntensity(ZONE_LOWER, brightnessLevel);
-  P.setIntensity(ZONE_UPPER, brightnessLevel);
-  Serial.printf("💡 Brightness set to %d for both zones\n", brightnessLevel);
-}
-
-// Function to check and fix zone brightness consistency
-void checkZoneBrightness() {
-  // Get current intensity for debugging
-  Serial.printf("🔍 Zone brightness check - Lower: attempting to read, Upper: attempting to read\n");
-  
-  // Force both zones to same brightness
-  P.setIntensity(ZONE_LOWER, brightnessLevel);
-  P.setIntensity(ZONE_UPPER, brightnessLevel);
-  
-  Serial.printf("🔧 Forced both zones to brightness %d\n", brightnessLevel);
-}
-
 // LED Matrix Config
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
 #define MAX_ZONES 2
@@ -224,6 +204,26 @@ const uint32_t WEATHER_OFFSET =  60000;   // +1   min after BTC
 
 static uint32_t lastBTC = 0, lastFee = 0, lastBlock = 0, lastMiner = 0, lastWeather = 0;
 static uint32_t bootMs = 0;
+
+// Function to set brightness for both zones
+void setBrightness(int level) {
+  brightnessLevel = constrain(level, 0, 15); // Ensure valid range
+  P.setIntensity(ZONE_LOWER, brightnessLevel);
+  P.setIntensity(ZONE_UPPER, brightnessLevel);
+  Serial.printf("💡 Brightness set to %d for both zones\n", brightnessLevel);
+}
+
+// Function to check and fix zone brightness consistency
+void checkZoneBrightness() {
+  // Get current intensity for debugging
+  Serial.printf("🔍 Zone brightness check - Lower: attempting to read, Upper: attempting to read\n");
+  
+  // Force both zones to same brightness
+  P.setIntensity(ZONE_LOWER, brightnessLevel);
+  P.setIntensity(ZONE_UPPER, brightnessLevel);
+  
+  Serial.printf("🔧 Forced both zones to brightness %d\n", brightnessLevel);
+}
 
 
 // Pre Connection Message for home users
