@@ -4,7 +4,6 @@
 #include <SPI.h>
 #include <WiFiManager.h>
 #include <HTTPClient.h>
-#include <WiFiClient.h>
 #include <ArduinoJson.h>
 #include "esp_task_wdt.h"
 #include "Font_Data.h" // Optional, if using custom fonts
@@ -51,14 +50,31 @@ uint8_t displayCycle = 0; // 👈 for rotating which screen we show
 // initializes the server so we can later attach our custom HTML page routes
 AsyncWebServer server(80);
 
-static WiFiClient httpClient;
-
 // 🌍 API Endpoints
 const char* BTC_API = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true";
 const char *BLOCK_API = "https://blockchain.info/q/getblockcount";
 const char *FEES_API = "https://mempool.space/api/v1/fees/recommended";
 const char *MEMPOOL_BLOCKS_API = "https://mempool.space/api/blocks";
 const char *BLOCKSTREAM_TX_API_BASE = "https://blockstream.info/api/block/";
+
+// ===== SatoNak API (authoritative) =====
+#define USE_SATONAK_PRICE 1    // 1 = use SatoNak for price, 0 = keep old source
+
+static const char* SATONAK_BASE   = "https://satonak.bitcoinmanor.com";
+static const char* SATONAK_PRICE  = "/api/price";   // supports ?fiat=EUR etc.
+static const char* SATONAK_HEIGHT = "/api/height";  // (for later)
+static const char* SATONAK_MINER  = "/api/miner";   // (for later)
+
+// default fiat (can be "USD", "EUR", etc.)
+static const char* FIAT_CODE = "USD";
+
+static inline String satonakUrl(const char* path, const char* fiat = nullptr) {
+  String u = String(SATONAK_BASE) + String(path);
+  if (fiat && fiat[0] != '\0') {
+    u += "?fiat="; u += fiat;
+  }
+  return u;
+}
 
 // ---- Smash Buy phrases split into TOP / BOTTOM lines ----
 const char* PHRASES[][2] = {
@@ -78,78 +94,29 @@ const char* PHRASES[][2] = {
 };
 #define NUM_PHRASES (sizeof(PHRASES) / sizeof(PHRASES[0]))
 
-// ==== PACMAN MODE (globals) ====
+// ==== PACMAN MODE (using working original code) ====
 enum UiMode { MODE_ROTATION, MODE_PACMAN };
 static UiMode uiMode = MODE_ROTATION;
 
-const int ROW_COLS = 64;          // columns per matrix row (edit if yours differs)
-const int TOP_OFFSET = ROW_COLS;   // 64 columns offset to reach the top band
-
-const uint16_t PAC_FRAME_MS = 75;  // same feel as original
-
-static unsigned long pacmanNextFrameAt = 0;
-static int pacmanStep = 0;        // 0..(2*ROW_COLS-1): bottom row then top
-static uint8_t pacFrame = 0;      // 0..3 (ping-pong)
-static int8_t pacDir = +1;        // +1 / -1
-static uint8_t pacBand = 0;       // 0 = bottom, 1 = top
-static unsigned long pacmanPrerollUntil = 0;  // pause before each band starts
-
-
-
-
-// 4 Pac-Man frames (18 columns wide)
-const uint8_t PACMAN_FRAMES[4][18] = {
-  {0xfe,0x73,0xfb,0x7f,0xf3,0x7b,0xfe,0x00,0x00,0x00,0x3c,0x7e,0x7e,0xff,0xe7,0xc3,0x81,0x00},
-  {0xfe,0x7b,0xf3,0x7f,0xfb,0x73,0xfe,0x00,0x00,0x00,0x3c,0x7e,0xff,0xff,0xe7,0xe7,0x42,0x00},
-  {0xfe,0x73,0xfb,0x7f,0xf3,0x7b,0xfe,0x00,0x00,0x00,0x3c,0x7e,0xff,0xff,0xff,0xe7,0x66,0x24},
-  {0xfe,0x7b,0xf3,0x7f,0xf3,0x7b,0xfe,0x00,0x00,0x00,0x3c,0x7e,0xff,0xff,0xff,0xff,0x7e,0x3c},
+// Working PacMan animation variables (from original_bitcoin_pacman.ino)
+const uint8_t pacman[4][18] =  // Bitcoin Symbol pursued by a pacman
+{
+  { 0xfe, 0x73, 0xfb, 0x7f, 0xf3, 0x7b, 0xfe, 0x00, 0x00, 0x00, 0x3c, 0x7e, 0x7e, 0xff, 0xe7, 0xc3, 0x81, 0x00 },
+  { 0xfe, 0x7b, 0xf3, 0x7f, 0xfb, 0x73, 0xfe, 0x00, 0x00, 0x00, 0x3c, 0x7e, 0xff, 0xff, 0xe7, 0xe7, 0x42, 0x00 },
+  { 0xfe, 0x73, 0xfb, 0x7f, 0xf3, 0x7b, 0xfe, 0x00, 0x00, 0x00, 0x3c, 0x7e, 0xff, 0xff, 0xff, 0xe7, 0x66, 0x24 },
+  { 0xfe, 0x7b, 0xf3, 0x7f, 0xf3, 0x7b, 0xfe, 0x00, 0x00, 0x00, 0x3c, 0x7e, 0xff, 0xff, 0xff, 0xff, 0x7e, 0x3c },
 };
-const uint8_t PAC_W = 18;
+const uint8_t DATA_WIDTH = (sizeof(pacman[0])/sizeof(pacman[0][0]));
+
+uint32_t prevTimeAnim = 0;  // remember the millis() value in animations
+int16_t pacIdx;             // display index (column) 
+uint8_t pacFrame;           // current animation frame
+uint8_t pacDeltaFrame;      // the animation frame offset for the next frame
+bool pacmanInit = true;     // initialize the animation
 
 
 
 
-/*
-// Miner Pool Detection
-String minerName = "Unknown";
-
-struct MinerTag {
-  const char* tag;
-  const char* name;
-};
-
-const MinerTag knownTags[] = {
-  { "f2pool", "F2Pool" }, { "antpool", "AntPool" }, { "viabtc", "ViaBTC" },
-  { "poolin", "Poolin" }, { "btccom", "BTC.com" }, { "binance", "Binance Pool" },
-  { "carbon", "Carbon Negative" }, { "slush", "Slush Pool" }, { "braiins", "Braiins Pool" },
-  { "foundry", "Foundry USA" }, { "ocean", "Ocean Pool" }, { "mara", "Marathon" },
-  { "marathon", "Marathon" }, { "luxor", "Luxor" }, { "ultimus", "ULTIMUSPOOL" },
-  { "novablock", "NovaBlock" }, { "sigma", "SigmaPool" }, { "spider", "SpiderPool" },
-  { "tera", "TERA Pool" }, { "okex", "OKEx Pool" }, { "kucoin", "KuCoin Pool" },
-  { "sbi", "SBI Crypto" }, { "btctop", "BTC.TOP" }, { "emcd", "EMCD Pool" },
-  { "secpool", "SECPOOL" }, { "hz", "HZ Pool" }, { "solo.ckpool", "Solo CKPool" },
-  { "solopool", "Solo Pool" }, { "solo", "Solo Miner" }, { "bitaxe", "Bitaxe Solo Miner" },
-  { "node.pw", "Node.PW" }, { "/axe/", "Bitaxe Solo Miner" }
-};
-
-String hexToAscii(const String& hex) {
-  String ascii = "";
-  for (unsigned int i = 0; i < hex.length(); i += 2) {
-    char c = (char) strtol(hex.substring(i, i + 2).c_str(), nullptr, 16);
-    if (isPrintable(c)) ascii += c;
-  }
-  return ascii;
-}
-
-String identifyMiner(String scriptSig) {
-  scriptSig.toLowerCase();
-  for (const auto& tag : knownTags) {
-    if (scriptSig.indexOf(tag.tag) != -1) return tag.name;
-  }
-  return "Unknown";
-}
-
-*/
 
 
 String mapWeatherCode(int code)
@@ -195,6 +162,7 @@ String weatherCondition = "Unknown";
 int temperature = 0;
 float btcChange24h = 0.0;
 char changeText[16];
+String minerName = "Unknown";
 
 String formatWithCommas(int number)
 {
@@ -239,18 +207,6 @@ unsigned long lastNTPUpdate = 0;
 const unsigned long WEATHER_UPDATE_INTERVAL = 30UL * 60UL * 1000UL; // 30 minutes
 const unsigned long NTP_UPDATE_INTERVAL = 10UL * 60UL * 1000UL;     // 10 minutes
 const unsigned long MEMORY_CHECK_INTERVAL = 5UL * 60UL * 1000UL;    // 5 minutes
-
-const uint32_t BTC_INTERVAL     = 300000;   // 5 min
-const uint32_t FEE_INTERVAL     = 300000;   // 5 min
-const uint32_t BLOCK_INTERVAL   = 300000;   // 5 min
-const uint32_t WEATHER_INTERVAL = 1800000;  // 30 min
-
-const uint32_t FEE_OFFSET     =  90000;   // +1.5 min after BTC
-const uint32_t BLOCK_OFFSET   = 180000;   // +3   min after BTC
-const uint32_t WEATHER_OFFSET =  60000;   // +1   min after BTC
-
-static uint32_t lastBTC = 0, lastFee = 0, lastBlock = 0, lastWeather = 0;
-static uint32_t bootMs = 0;
 
 // Pre Connection Message for home users
 void showPreConnectionMessage()
@@ -371,11 +327,19 @@ void loadSavedSettingsAndConnect() {
 
     // FETCH FUNCTIONS
     void fetchBitcoinData() {
+  // Try SatoNak first, then fallback to CoinGecko
+  if (fetchPriceFromSatoNak()) {
+    Serial.println("✅ Bitcoin price fetched from SatoNak");
+    return;
+  }
+  
+  Serial.println("⚠️ SatoNak failed, trying CoinGecko fallback");
+  
   if (ESP.getFreeHeap() < 160000) {
     Serial.println("❌ Not enough heap to safely fetch. Skipping BTC fetch.");
     return;
   }
-  Serial.println("🔄 Fetching BTC Price...");
+  Serial.println("🔄 Fetching BTC Price from CoinGecko...");
   HTTPClient http;
   http.begin(BTC_API);
   if (http.GET() == 200) {
@@ -398,15 +362,207 @@ void loadSavedSettingsAndConnect() {
   Serial.printf("📈 Free heap after fetch: %d bytes\n", ESP.getFreeHeap());
 }
 
+// Returns true on success, false on any failure (so callers can fallback)
+bool fetchPriceFromSatoNak() {
+  if (ESP.getFreeHeap() < 160000) {
+    Serial.println("❌ Low heap; skipping SatoNak price fetch");
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("🌐 WiFi not connected; skipping SatoNak price fetch");
+    return false;
+  }
+
+  String full = satonakUrl(SATONAK_PRICE, FIAT_CODE); // e.g. /api/price?fiat=USD
+  Serial.print("🌐 GET "); Serial.println(full);
+
+  HTTPClient http;
+  http.setTimeout(4000);
+  http.setConnectTimeout(2500);
+  http.useHTTP10(true);
+  http.setReuse(false);
+
+  if (!http.begin(full)) {
+    Serial.println("❌ http.begin failed (SatoNak)");
+    return false;
+  }
+
+  int rc = http.GET();
+  if (rc != 200) {
+    Serial.printf("❌ SatoNak price GET failed (%d)\n", rc);
+    http.end();
+    return false;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  DynamicJsonDocument doc(1536);
+  DeserializationError e = deserializeJson(doc, payload);
+  if (e) {
+    Serial.printf("❌ SatoNak JSON parse error: %s\n", e.c_str());
+    Serial.println("↪︎ Payload (trim): " + payload.substring(0, 220));
+    return false;
+  }
+
+  // Respect your FIAT_CODE (e.g., "USD"/"EUR")
+  String key = String(FIAT_CODE); key.toLowerCase();
+
+  double px = 0.0;
+  if (doc.containsKey("price") && doc["price"].is<JsonObject>()) {
+    if (doc["price"][key].is<double>()) px = (double)doc["price"][key];
+    else if (doc["price"][key].is<long>()) px = (double)((long)doc["price"][key]);
+  }
+  if (px <= 0.0) {
+    if (doc[key].is<double>()) px = (double)doc[key];
+    else if (doc[key].is<long>()) px = (double)((long)doc[key]);
+  }
+  if (px <= 0.0) {
+    Serial.println("❌ SatoNak: no valid price in payload");
+    Serial.println("↪︎ Payload (trim): " + payload.substring(0, 220));
+    return false;
+  }
+
+  double change = 0.0;
+  if (doc["change_24h"].is<double>()) change = (double)doc["change_24h"];
+
+  long sps = 0;
+  if (doc["sats_per_usd"].is<long>()) sps = (long)doc["sats_per_usd"];
+  if (sps == 0 && key == "usd") sps = (long)(100000000.0 / px);
+
+  // Update your existing globals/buffers (exact names as in your sketch)
+  btcPrice      = (int)round(px);
+  btcChange24h  = (float)change;
+  satsPerDollar = (int)sps;
+
+  if (key == "usd") {
+    snprintf(btcText, sizeof(btcText), "$%s", formatWithCommas(btcPrice).c_str());
+  } else {
+    snprintf(btcText, sizeof(btcText), "%s", formatWithCommas(btcPrice).c_str());
+  }
+  snprintf(satsText,   sizeof(satsText),  "%d sats", satsPerDollar);
+  snprintf(changeText, sizeof(changeText), "%+.2f%%", btcChange24h);
+
+  Serial.printf("✅ SatoNak Price: %s | 24h: %+.2f%% | Sats/$: %d | Free heap: %d\n",
+                btcText, btcChange24h, satsPerDollar, ESP.getFreeHeap());
+  return true;
+}
+
+// Fetch miner info from SatoNak API
+bool fetchMinerFromSatoNak() {
+  if (ESP.getFreeHeap() < 160000) {
+    Serial.println("❌ Low heap; skipping SatoNak miner fetch");
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("🌐 WiFi not connected; skipping SatoNak miner fetch");
+    return false;
+  }
+
+  String full = String(SATONAK_BASE) + String(SATONAK_MINER);
+  Serial.print("🌐 GET "); Serial.println(full);
+
+  HTTPClient http;
+  http.setTimeout(4000);
+  http.setConnectTimeout(2500);
+  http.useHTTP10(true);
+  http.setReuse(false);
+
+  if (!http.begin(full)) {
+    Serial.println("❌ http.begin failed (SatoNak miner)");
+    return false;
+  }
+
+  int rc = http.GET();
+  if (rc != 200) {
+    Serial.printf("❌ SatoNak miner GET failed (%d)\n", rc);
+    http.end();
+    return false;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  // For simple text response, just use the payload directly
+  payload.trim();
+  if (payload.length() > 0 && payload.length() < 32) {
+    minerName = payload;
+    Serial.printf("✅ SatoNak Miner: %s | Free heap: %d\n", minerName.c_str(), ESP.getFreeHeap());
+    return true;
+  } else {
+    Serial.println("❌ SatoNak miner: invalid response");
+    Serial.println("↪︎ Payload: " + payload.substring(0, 100));
+    return false;
+  }
+}
+
+// Fetch block height from SatoNak API
+bool fetchHeightFromSatoNak() {
+  if (ESP.getFreeHeap() < 160000) {
+    Serial.println("❌ Low heap; skipping SatoNak height fetch");
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("🌐 WiFi not connected; skipping SatoNak height fetch");
+    return false;
+  }
+
+  String full = String(SATONAK_BASE) + String(SATONAK_HEIGHT);
+  Serial.print("🌐 GET "); Serial.println(full);
+
+  HTTPClient http;
+  http.setTimeout(4000);
+  http.setConnectTimeout(2500);
+  http.useHTTP10(true);
+  http.setReuse(false);
+
+  if (!http.begin(full)) {
+    Serial.println("❌ http.begin failed (SatoNak height)");
+    return false;
+  }
+
+  int rc = http.GET();
+  if (rc != 200) {
+    Serial.printf("❌ SatoNak height GET failed (%d)\n", rc);
+    http.end();
+    return false;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  // For simple text response, parse as integer
+  payload.trim();
+  int newHeight = payload.toInt();
+  if (newHeight > 0 && newHeight > blockHeight - 100) { // sanity check
+    blockHeight = newHeight;
+    sprintf(blockText, "%d", blockHeight);
+    Serial.printf("✅ SatoNak Height: %d | Free heap: %d\n", blockHeight, ESP.getFreeHeap());
+    return true;
+  } else {
+    Serial.println("❌ SatoNak height: invalid response");
+    Serial.println("↪︎ Payload: " + payload.substring(0, 50));
+    return false;
+  }
+}
+
 
     void fetchBlockHeight()
     {
-      if (ESP.getFreeHeap() < 160000)
-      {
-        Serial.println("❌ Not enough heap to safely fetch. Skipping BTC fetch.");
+      // Try SatoNak first, then fallback to blockchain.info
+      if (fetchHeightFromSatoNak()) {
+        Serial.println("✅ Block height fetched from SatoNak");
         return;
       }
-      Serial.println("🔄 Fetching Block Height...");
+      
+      Serial.println("⚠️ SatoNak failed, trying blockchain.info fallback");
+      
+      if (ESP.getFreeHeap() < 160000)
+      {
+        Serial.println("❌ Not enough heap to safely fetch. Skipping block height fetch.");
+        return;
+      }
+      Serial.println("🔄 Fetching Block Height from blockchain.info...");
       HTTPClient http;
       http.begin(BLOCK_API);
       if (http.GET() == 200)
@@ -492,51 +648,32 @@ void loadSavedSettingsAndConnect() {
 
 */
 
-    void fetchFeeRate() {
-  if (heap_caps_get_free_size(MALLOC_CAP_DEFAULT) < 160 * 1024) {
-    Serial.println("🛑 Low heap before Fee fetch; skipping");
-    return;
-  }
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("🌐 WiFi not connected; skipping Fee fetch");
-    return;
-  }
-
-  Serial.println("🔄 Fetching Fee Rate…");
-  HTTPClient http;
-  // short, explicit timeouts so we never stall long enough to trip WDT
-  http.setTimeout(3000);         // total I/O timeout ~3s
-  http.setConnectTimeout(2000);  // TCP connect timeout ~2s
-  http.useHTTP10(true);          // simpler, avoids chunking issues
-  http.setReuse(false);          // no keep-alive reuse
-
-  // FEES_API should be your existing endpoint string, unchanged
-  if (!http.begin(httpClient, FEES_API)) {
-    Serial.println("❌ http.begin failed; keeping last fee value");
-    return;
-  }
-
-  int rc = http.GET();
-  if (rc == 200) {
-    String payload = http.getString();
-    DynamicJsonDocument doc(512);
-    DeserializationError e = deserializeJson(doc, payload);
-    if (e) {
-      Serial.printf("❌ Fee JSON parse error: %s; keeping last value\n", e.c_str());
-    } else {
-      // keep previous value if field missing
-      int newFee = doc["fastestFee"] | feeRate;
-      feeRate = newFee;
-      // feeText should be your existing global char buffer
-      snprintf(feeText, sizeof(feeText), "%d sat/vB", feeRate);
-      Serial.printf("✅ Updated Fee Rate: %d sat/vB\n", feeRate);
+    void fetchFeeRate()
+    {
+      if (ESP.getFreeHeap() < 160000)
+      {
+        Serial.println("❌ Not enough heap to safely fetch. Skipping BTC fetch.");
+        return;
+      }
+      Serial.println("🔄 Fetching Fee Rate...");
+      HTTPClient http;
+      http.begin(FEES_API);
+      if (http.GET() == 200)
+      {
+        DynamicJsonDocument doc(512);
+        deserializeJson(doc, http.getString());
+        feeRate = doc["fastestFee"];
+        sprintf(feeText, "%d sat/vB", feeRate);
+        Serial.printf("✅ Updated Fee Rate: %d sat/vB\n", feeRate);
+        Serial.printf("✅ Fee Rate: %s\n", feeText);
+      }
+      else
+      {
+        Serial.println("❌ Failed to fetch Fee Rate");
+      }
+      http.end();
+      Serial.printf("📈 Free heap after fetch: %d bytes\n", ESP.getFreeHeap());
     }
-  } else {
-    Serial.printf("❌ Fee GET failed (%d); keeping last value\n", rc);
-  }
-  http.end();
-}
-
 
     void fetchTime()
     {
@@ -827,12 +964,11 @@ void loadSavedSettingsAndConnect() {
       Serial.println("🌍 Async Web server started");
       delay(2000); // 🕒 Let server stabilize after starting
 
-      bootMs = millis();
-
       // Initial API Fetch
       Serial.println("🌍 Fetching initial data...");
       fetchBitcoinData();
       fetchBlockHeight();
+      fetchMinerFromSatoNak();
       fetchFeeRate();
       fetchTime();
       fetchLatLonFromCity();
@@ -867,159 +1003,83 @@ void loadSavedSettingsAndConnect() {
       esp_task_wdt_add(NULL); // Add current task to WDT
     }
 
-// Draw/erase an 8xW sprite onto a band: columns are absolute = bandOffset + col
-static void drawSpriteBits(int bandOffset, int col0, const uint8_t* cols, int w, bool on) {
+// Working PacMan animation functions (from original_bitcoin_pacman.ino)
+static bool runPacmanAnimation() {
+  // Is it time to animate?
+  if (millis() - prevTimeAnim < 75)  // 75ms delay like original
+    return true;  // Still animating
+  prevTimeAnim = millis();
+
   MD_MAX72XX* mx = P.getGraphicObject();
-  if (!mx) return;
-  for (int i = 0; i < w; i++) {
-    int c = bandOffset + col0 + i;     // << absolute column within the 16-device chain
-    if (c < 0) continue;
-    uint8_t bits = cols[i];            // bit0 is row 0, bit7 is row 7
-    for (int r = 0; r < 8; r++) {
-      if (bits & (1 << r)) mx->setPoint(r, c, on);   // << rows are always 0..7
-    }
-  }
-}
+  if (!mx) return false;
 
+  mx->control(MD_MAX72XX::UPDATE, MD_MAX72XX::OFF);
 
-
-
-
-// Draw current frame (and erase previous columns)
-// Track previous frame to erase cleanly
-static int prevBandOffset = 0, prevCol0 = -1000;
-static void pacmanDrawFrame(int bandOffset, int col0) {
-  MD_MAX72XX* mx = P.getGraphicObject();
-  if (!mx) return;
-
-  // ERASE: only if the previous frame actually overlapped this band
-  if (prevCol0 != -1000) {
-    const int bandMin = bandOffset;
-    const int bandMax = bandOffset + ROW_COLS - 1;
-
-    int spanStart = prevBandOffset + prevCol0;          // prev left edge (abs col)
-    int spanEnd   = spanStart + PAC_W - 1;              // prev right edge
-    if (spanEnd >= bandMin && spanStart <= bandMax) {
-      if (spanStart < bandMin) spanStart = bandMin;
-      if (spanEnd   > bandMax) spanEnd   = bandMax;
-      for (int c = spanStart; c <= spanEnd; c++) {
-        for (int r = 0; r < 8; r++) mx->setPoint(r, c, false);
-      }
-    }
-  }
-
-  // DRAW: paint current sprite at new position
-  drawSpriteBits(bandOffset, col0, PACMAN_FRAMES[pacFrame], PAC_W, /*on=*/true);
-
-  // remember for next erase
-  prevBandOffset = bandOffset;
-  prevCol0       = col0;
-}
-
-
-
-// Draw the repeating ₿ pattern across one band (bandOffset = 0 for bottom, +64 for top)
-static void drawBitcoinRow(int bandOffset) {
-  MD_MAX72XX* mx = P.getGraphicObject();
-  if (!mx) return;
-
-  const int modules = ROW_COLS / 8;    // 8 devices per band
-  for (int m = 0; m < modules; m++) {
-    int c0 = bandOffset + m * 8;       // absolute left column of this 8-col module
-
-    // same ₿ pattern as original
-    mx->setPoint(0, c0 + 4, true); mx->setPoint(0, c0 + 2, true);
-
-    mx->setPoint(1, c0 + 5, true); mx->setPoint(1, c0 + 4, true);
-    mx->setPoint(1, c0 + 3, true); mx->setPoint(1, c0 + 2, true);
-
-    mx->setPoint(2, c0 + 5, true); mx->setPoint(2, c0 + 1, true);
-
-    mx->setPoint(3, c0 + 5, true); mx->setPoint(3, c0 + 4, true);
-    mx->setPoint(3, c0 + 3, true); mx->setPoint(3, c0 + 2, true);
-
-    mx->setPoint(4, c0 + 5, true); mx->setPoint(4, c0 + 1, true);
-
-    mx->setPoint(5, c0 + 5, true); mx->setPoint(5, c0 + 4, true);
-    mx->setPoint(5, c0 + 3, true); mx->setPoint(5, c0 + 2, true);
-
-    mx->setPoint(6, c0 + 4, true); mx->setPoint(6, c0 + 2, true);
-  }
-}
-
-
-static void pacmanInit() {
-  pacmanStep = -PAC_W;          // off-screen entry so ₿ are visible first
-  pacFrame = 0;
-  pacDir = +1;
-  pacmanNextFrameAt = 0;
-  prevCol0 = -1000;
-  prevBandOffset = 0;
-  pacBand = 0;
-  P.displaySuspend(true);
-  P.displayClear();
-  drawBitcoinRow(0);            // bottom band once
-  drawBitcoinRow(TOP_OFFSET);   // top band once
-}
-
-
-
-
-// Dual-row Pac-Man: bottom L->R, then top R->L
-static bool pacmanFrame() {
-  if (millis() < pacmanNextFrameAt) return true;
-  pacmanNextFrameAt = millis() + PAC_FRAME_MS;
-
-  static bool topRowStarted = false;
-
-  int bandOffset = (pacBand == 0) ? 0 : TOP_OFFSET;
-  // bottom L->R from -PAC_W; top R->L from off-screen right
-  int col0 = (pacBand == 0) ? pacmanStep : (ROW_COLS - PAC_W) - pacmanStep;
-
-  if (pacBand == 1 && !topRowStarted) {
-    // Before starting top row, redraw all Bitcoin symbols and reset state
-    P.displayClear();
-    drawBitcoinRow(TOP_OFFSET);
-    pacmanStep = -PAC_W;
+  // Initialize
+  if (pacmanInit) {
+    mx->clear();
+    pacIdx = -DATA_WIDTH;
     pacFrame = 0;
-    pacDir = -1;
-    prevCol0 = -1000;
-    prevBandOffset = TOP_OFFSET;
-    topRowStarted = true;
-    return true;
-  }
+    pacDeltaFrame = 1;
+    pacmanInit = false;
 
-  if (pacBand == 0) topRowStarted = false;
-
-  // first-visible guard: don’t erase before we’ve drawn anything on-screen
-  if (prevCol0 < 0 && col0 >= 0) prevCol0 = -1000;
-
-  pacmanDrawFrame(bandOffset, col0);
-
-  pacFrame += pacDir;
-  if (pacFrame == 0 || pacFrame == 3) pacDir = -pacDir;
-
-  pacmanStep++;
-
-  // Done with this band?
-  if (pacmanStep >= ROW_COLS) {
-    prevCol0 = -1000;
-    pacmanStep = -PAC_W;
-    if (pacBand == 0) {
-      // Switch to top band, reset state and direction
-      pacBand = 1;
-      // topRowStarted will trigger redraw and reset on next frame
-    } else {
-      // Animation done
-      pacBand = 0;
-      topRowStarted = false;
-      P.displayClear();
-      P.displaySuspend(false);
-      P.synchZoneStart();
-      return false;
+    // Show "SMASH BUY!" on top zone
+    P.displayZoneText(ZONE_UPPER, "SMASH BUY!", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
+    
+    // Lay out the Bitcoin symbols (just like original)
+    for (uint8_t i = 0; i < MAX_DEVICES; i++) {
+      mx->setPoint(0, (i * 8) + 4, true);
+      mx->setPoint(0, (i * 8) + 2, true);
+      mx->setPoint(1, (i * 8) + 5, true);
+      mx->setPoint(1, (i * 8) + 4, true);
+      mx->setPoint(1, (i * 8) + 3, true);
+      mx->setPoint(1, (i * 8) + 2, true);
+      mx->setPoint(2, (i * 8) + 5, true);
+      mx->setPoint(2, (i * 8) + 1, true);
+      mx->setPoint(3, (i * 8) + 5, true);
+      mx->setPoint(3, (i * 8) + 4, true);
+      mx->setPoint(3, (i * 8) + 3, true);
+      mx->setPoint(3, (i * 8) + 2, true);
+      mx->setPoint(4, (i * 8) + 5, true);
+      mx->setPoint(4, (i * 8) + 1, true);
+      mx->setPoint(5, (i * 8) + 5, true);
+      mx->setPoint(5, (i * 8) + 4, true);
+      mx->setPoint(5, (i * 8) + 3, true);
+      mx->setPoint(5, (i * 8) + 2, true);
+      mx->setPoint(6, (i * 8) + 4, true);
+      mx->setPoint(6, (i * 8) + 2, true);
     }
   }
-  return true;
+
+  // Clear old graphic
+  for (uint8_t i = 0; i < DATA_WIDTH; i++) {
+    int16_t col = pacIdx - DATA_WIDTH + i;
+    if (col >= 0 && col < mx->getColumnCount())
+      mx->setColumn(col, 0);
+  }
+
+  // Move reference column and draw new graphic
+  pacIdx++;
+  for (uint8_t i = 0; i < DATA_WIDTH; i++) {
+    int16_t col = pacIdx - DATA_WIDTH + i;
+    if (col >= 0 && col < mx->getColumnCount())
+      mx->setColumn(col, pacman[pacFrame][i]);
+  }
+
+  // Advance the animation frame
+  pacFrame += pacDeltaFrame;
+  if (pacFrame == 0 || pacFrame == 3)
+    pacDeltaFrame = -pacDeltaFrame;
+
+  mx->control(MD_MAX72XX::UPDATE, MD_MAX72XX::ON);
+
+  // Check if animation is complete
+  if (pacIdx >= mx->getColumnCount() + DATA_WIDTH) {
+    pacmanInit = true;  // Reset for next time
+    return false;       // Animation finished
+  }
+
+  return true;  // Still animating
 }
 
 
@@ -1064,13 +1124,18 @@ static bool pacmanFrame() {
       esp_task_wdt_reset();           // Reset watchdog
       dnsServer.processNextRequest(); // Handle captive portal DNS magic
 
-      // If Pac-Man mode is active, run frames and skip normal rotation
+      // If Pac-Man mode is active, run the working animation
 if (uiMode == MODE_PACMAN) {
-  // Do NOT call P.displayAnimate() while suspended; we draw directly via MD_MAX72XX.
-  if (!pacmanFrame()) {
-    uiMode = MODE_ROTATION;     // finished: hand back to rotation
+  // Keep text animations running (for "SMASH BUY!" text)
+  P.displayAnimate();
+  
+  // Run the working PacMan animation
+  if (!runPacmanAnimation()) {
+    uiMode = MODE_ROTATION;     // Finished: return to normal rotation
+    P.displayClear();           // Clean up
+    P.synchZoneStart();         // Reset zones
   }
-  return;                       // skip the rest of loop this tick
+  return;                       // Skip the rest of loop this tick
 }
 
 
@@ -1089,7 +1154,7 @@ if (lastButtonState == HIGH && currentButtonState == LOW) {
 lastButtonState = currentButtonState;
 
 
-// ── Smash-Buy: trigger Pac-Man animation
+// ── Smash-Buy: trigger working Pac-Man animation
 if (buttonPressed) {
   buttonPressed = false;                 // consume the event
 
@@ -1100,17 +1165,11 @@ if (buttonPressed) {
   } else {
     pressLockUntil = millis() + 600;     // 0.6s lockout
 
-    // 1) Splash first (Parola active)
-    P.displayClear();
-    P.displayZoneText(ZONE_UPPER, "SMASH", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    P.displayZoneText(ZONE_LOWER, "BUY!",  PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    while (!P.displayAnimate()) { esp_task_wdt_reset(); delay(10); }
-    P.displayClear();
-
-    // 2) Then start Pac-Man (both rows via pacBand phases)   
+    // Start working PacMan animation
     uiMode = MODE_PACMAN;
-    pacmanInit();
-    Serial.println("🎮 Pac-Man animation starting…");
+    pacmanInit = true;  // Reset animation
+    prevTimeAnim = 0;   // Reset timer
+    Serial.println("🎮 Working Pac-Man animation starting…");
   }
 }
 
@@ -1145,34 +1204,6 @@ if (buttonPressed) {
         lastTimeFetch = currentMillis;
       }
 
-         // ── HTTP scheduler: serialize network calls to avoid overlap
-if (WiFi.status() == WL_CONNECTED) {
-  uint32_t now = millis();
-
-  // 1) BTC every BTC_INTERVAL
-  if (now - lastBTC >= BTC_INTERVAL) {
-    fetchBitcoinData();
-    lastBTC = now;
-  }
-  // 2) Fee at +offset
-  else if ((now - lastFee >= (FEE_INTERVAL + FEE_OFFSET)) && (now >= bootMs + FEE_OFFSET)) {
-    fetchFeeRate();
-    lastFee = now;
-  }
-  // 3) Block height at +offset
-  else if ((now - lastBlock >= (BLOCK_INTERVAL + BLOCK_OFFSET)) && (now >= bootMs + BLOCK_OFFSET)) {
-    fetchBlockHeight();
-    lastBlock = now;
-  }
-  // 4) Weather seldom, with a small offset
-  else if ((now - lastWeather >= (WEATHER_INTERVAL + WEATHER_OFFSET)) && (now >= bootMs + WEATHER_OFFSET)) {
-    fetchWeather();
-    lastWeather = now;
-  }
-}
-
-      
-/*
       // 🌦️ Fetch Weather every 30 minutes
       static unsigned long lastWeatherFetch = 0;
       if (currentMillis - lastWeatherFetch >= 1800000)
@@ -1195,9 +1226,10 @@ if (WiFi.status() == WL_CONNECTED) {
       if (currentMillis - lastBlockHeightFetch >= 300000)
       {
         fetchBlockHeight();
+        fetchMinerFromSatoNak();
         lastBlockHeightFetch = currentMillis;
       }
-*/
+
 
       // 🖥️ Rotate screens
   if (P.displayAnimate()) {
@@ -1213,18 +1245,18 @@ if (WiFi.status() == WL_CONNECTED) {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
-/*
+
+
       case 1:
-        Serial.println("🖥️ Displaying MINED BY screen...");
-        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MINED BY", minerName.c_str());
-        P.displayZoneText(ZONE_UPPER, "MINED BY", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_FADE);
-        P.displayZoneText(ZONE_LOWER, minerName.c_str(), PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_FADE);
+        Serial.println("🖥️ Displaying MINER screen...");
+        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MINER", minerName.c_str());
+        P.displayZoneText(ZONE_UPPER, "MINED BY", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_LOWER, minerName.c_str(), PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
-        break; 
-*/
+        break;
 
-     case 1:
+      case 2:
         Serial.println("🖥️ Displaying USD PRICE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "USD PRICE", btcText);
         P.displayZoneText(ZONE_UPPER, "USD PRICE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1234,7 +1266,7 @@ if (WiFi.status() == WL_CONNECTED) {
         break; 
 
           
-     case 2:
+      case 3:
         Serial.println("🖥️ Displaying 24H CHANGE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "24H CHANGE", changeText);
         P.displayZoneText(ZONE_UPPER, "24H CHANGE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1243,7 +1275,7 @@ if (WiFi.status() == WL_CONNECTED) {
         P.synchZoneStart();
         break;
 
-      case 3:
+      case 4:
         Serial.println("🖥️ Displaying SATS/$ screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText);
         P.displayZoneText(ZONE_UPPER, "SATS/USD", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1252,7 +1284,7 @@ if (WiFi.status() == WL_CONNECTED) {
         P.synchZoneStart(); // Force synchronization  
         break;
         
-      case 4:
+      case 5:
         Serial.println("🖥️ Displaying FEE RATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "FEE RATE", feeText);
         P.displayZoneText(ZONE_UPPER, "FEE RATE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1262,7 +1294,7 @@ if (WiFi.status() == WL_CONNECTED) {
         break;
 
         
-      case 5:
+      case 6:
         Serial.println("🖥️ Displaying TIME and City screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "TIME", timeText);
         P.displayZoneText(ZONE_UPPER, savedCity.c_str(), PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1272,7 +1304,7 @@ if (WiFi.status() == WL_CONNECTED) {
         break;
 
         
-      case 6:
+      case 7:
         Serial.println("🖥️ Displaying DAY/DATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", dayText, dateText);
         P.displayZoneText(ZONE_UPPER, dayText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1282,7 +1314,7 @@ if (WiFi.status() == WL_CONNECTED) {
         break;
 
         
-      case 7: {
+      case 8: {
         Serial.println("🖥️ Displaying WEATHER screen...");
         static char tempDisplay[16];
         snprintf(tempDisplay, sizeof(tempDisplay), (temperature >= 0) ? "+%dC" : "%dC", temperature);
@@ -1302,8 +1334,9 @@ if (WiFi.status() == WL_CONNECTED) {
         break;
       }
 
+      
 
-      case 8:
+      case 9:
         Serial.println("🖥️ Displaying MOSCOW TIME screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText);
         P.displayZoneText(ZONE_UPPER, "MOSCOW TIME", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1313,16 +1346,16 @@ if (WiFi.status() == WL_CONNECTED) {
         break;
 
 
-      case 9:// This is for the models we ship but can be changed for custom units
-        P.displayZoneText(ZONE_UPPER, "CRYPTO", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
-        P.displayZoneText(ZONE_LOWER, "CLOAKS",      PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
+      case 10:// This is for the models we ship but can be changed for custom units
+        P.displayZoneText(ZONE_UPPER, "Stacksworth", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
+        P.displayZoneText(ZONE_LOWER, "MATRIX",      PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
         P.displayClear();
         P.synchZoneStart();
         break;
     }
 
       Serial.println("✅ Screen update complete.");
-      displayCycle = (displayCycle + 1) % 10;
+      displayCycle = (displayCycle + 1) % 11;
       
     }
   }
