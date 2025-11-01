@@ -60,6 +60,26 @@ const char *FEES_API = "https://mempool.space/api/v1/fees/recommended";
 const char *MEMPOOL_BLOCKS_API = "https://mempool.space/api/blocks";
 const char *BLOCKSTREAM_TX_API_BASE = "https://blockstream.info/api/block/";
 
+// ===== SatoNak API (authoritative) =====
+#define USE_SATONAK_PRICE 1    // 1 = use SatoNak for price, 0 = keep old source
+
+static const char* SATONAK_BASE   = "https://satonak.bitcoinmanor.com";
+static const char* SATONAK_PRICE  = "/api/price";   // supports ?fiat=EUR etc.
+static const char* SATONAK_HEIGHT = "/api/height";  // (for later)
+static const char* SATONAK_MINER  = "/api/miner";   // (for later)
+
+// default fiat (can be "USD", "EUR", etc.)
+static const char* FIAT_CODE = "USD";
+
+static inline String satonakUrl(const char* path, const char* fiat = nullptr) {
+  String u = String(SATONAK_BASE) + String(path);
+  if (fiat && fiat[0] != '\0') {
+    u += "?fiat="; u += fiat;
+  }
+  return u;
+}
+
+
 // ---- Smash Buy phrases split into TOP / BOTTOM lines ----
 const char* PHRASES[][2] = {
   { "SMASH",           "BUY!" },
@@ -153,7 +173,8 @@ String formatWithCommas(int number)
 #define BUTTON_PIN 25   //Pin for Smash Buy Button
 
 MD_Parola P = MD_Parola(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
-// int brightnessLevel = 6;  // 0 = dimmest, 15 = brightest
+// Brightness: 0 = dimmest, 15 = brightest
+uint8_t BRIGHTNESS = 1;
 unsigned long lastFetchTime = 0;
 uint8_t cycle = 0;             // 🔥 Needed for animation control
 unsigned long lastApiCall = 0; // 🔥 Needed for fetch timing
@@ -203,8 +224,8 @@ void showPreConnectionMessage()
     P.displayZoneText(ZONE_LOWER, "Labelled", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
     break;
   case 3:
-    P.displayZoneText(ZONE_UPPER, "Stacksworth", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    P.displayZoneText(ZONE_LOWER, "MATRIX", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+    P.displayZoneText(ZONE_UPPER, "SW-Matrix", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+    P.displayZoneText(ZONE_LOWER, "******", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
     break;
   case 4:
     P.displayZoneText(ZONE_UPPER, "OR TYPE", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
@@ -297,11 +318,19 @@ void loadSavedSettingsAndConnect() {
 
     // FETCH FUNCTIONS
     void fetchBitcoinData() {
+  // Try SatoNak first, then fallback to CoinGecko
+  if (fetchPriceFromSatoNak()) {
+    Serial.println("✅ Bitcoin price fetched from SatoNak");
+    return;
+  }
+  
+  Serial.println("⚠️ SatoNak failed, trying CoinGecko fallback");
+  
   if (ESP.getFreeHeap() < 160000) {
     Serial.println("❌ Not enough heap to safely fetch. Skipping BTC fetch.");
     return;
   }
-  Serial.println("🔄 Fetching BTC Price...");
+  Serial.println("🔄 Fetching BTC Price from CoinGecko...");
   HTTPClient http;
   http.begin(BTC_API);
   if (http.GET() == 200) {
@@ -324,15 +353,207 @@ void loadSavedSettingsAndConnect() {
   Serial.printf("📈 Free heap after fetch: %d bytes\n", ESP.getFreeHeap());
 }
 
+// Returns true on success, false on any failure (so callers can fallback)
+bool fetchPriceFromSatoNak() {
+  if (ESP.getFreeHeap() < 160000) {
+    Serial.println("❌ Low heap; skipping SatoNak price fetch");
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("🌐 WiFi not connected; skipping SatoNak price fetch");
+    return false;
+  }
+
+  String full = satonakUrl(SATONAK_PRICE, FIAT_CODE); // e.g. /api/price?fiat=USD
+  Serial.print("🌐 GET "); Serial.println(full);
+
+  HTTPClient http;
+  http.setTimeout(4000);
+  http.setConnectTimeout(2500);
+  http.useHTTP10(true);
+  http.setReuse(false);
+
+  if (!http.begin(full)) {
+    Serial.println("❌ http.begin failed (SatoNak)");
+    return false;
+  }
+
+  int rc = http.GET();
+  if (rc != 200) {
+    Serial.printf("❌ SatoNak price GET failed (%d)\n", rc);
+    http.end();
+    return false;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  DynamicJsonDocument doc(1536);
+  DeserializationError e = deserializeJson(doc, payload);
+  if (e) {
+    Serial.printf("❌ SatoNak JSON parse error: %s\n", e.c_str());
+    Serial.println("↪︎ Payload (trim): " + payload.substring(0, 220));
+    return false;
+  }
+
+  // Respect your FIAT_CODE (e.g., "USD"/"EUR")
+  String key = String(FIAT_CODE); key.toLowerCase();
+
+  double px = 0.0;
+  if (doc.containsKey("price") && doc["price"].is<JsonObject>()) {
+    if (doc["price"][key].is<double>()) px = (double)doc["price"][key];
+    else if (doc["price"][key].is<long>()) px = (double)((long)doc["price"][key]);
+  }
+  if (px <= 0.0) {
+    if (doc[key].is<double>()) px = (double)doc[key];
+    else if (doc[key].is<long>()) px = (double)((long)doc[key]);
+  }
+  if (px <= 0.0) {
+    Serial.println("❌ SatoNak: no valid price in payload");
+    Serial.println("↪︎ Payload (trim): " + payload.substring(0, 220));
+    return false;
+  }
+
+  double change = 0.0;
+  if (doc["change_24h"].is<double>()) change = (double)doc["change_24h"];
+
+  long sps = 0;
+  if (doc["sats_per_usd"].is<long>()) sps = (long)doc["sats_per_usd"];
+  if (sps == 0 && key == "usd") sps = (long)(100000000.0 / px);
+
+  // Update your existing globals/buffers (exact names as in your sketch)
+  btcPrice      = (int)round(px);
+  btcChange24h  = (float)change;
+  satsPerDollar = (int)sps;
+
+  if (key == "usd") {
+    snprintf(btcText, sizeof(btcText), "$%s", formatWithCommas(btcPrice).c_str());
+  } else {
+    snprintf(btcText, sizeof(btcText), "%s", formatWithCommas(btcPrice).c_str());
+  }
+  snprintf(satsText,   sizeof(satsText),  "%d sats", satsPerDollar);
+  snprintf(changeText, sizeof(changeText), "%+.2f%%", btcChange24h);
+
+  Serial.printf("✅ SatoNak Price: %s | 24h: %+.2f%% | Sats/$: %d | Free heap: %d\n",
+                btcText, btcChange24h, satsPerDollar, ESP.getFreeHeap());
+  return true;
+}
+
+// Fetch miner info from SatoNak API
+bool fetchMinerFromSatoNak() {
+  if (ESP.getFreeHeap() < 160000) {
+    Serial.println("❌ Low heap; skipping SatoNak miner fetch");
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("🌐 WiFi not connected; skipping SatoNak miner fetch");
+    return false;
+  }
+
+  String full = String(SATONAK_BASE) + String(SATONAK_MINER);
+  Serial.print("🌐 GET "); Serial.println(full);
+
+  HTTPClient http;
+  http.setTimeout(4000);
+  http.setConnectTimeout(2500);
+  http.useHTTP10(true);
+  http.setReuse(false);
+
+  if (!http.begin(full)) {
+    Serial.println("❌ http.begin failed (SatoNak miner)");
+    return false;
+  }
+
+  int rc = http.GET();
+  if (rc != 200) {
+    Serial.printf("❌ SatoNak miner GET failed (%d)\n", rc);
+    http.end();
+    return false;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  // For simple text response, just use the payload directly
+  payload.trim();
+  if (payload.length() > 0 && payload.length() < 32) {
+    minerName = payload;
+    Serial.printf("✅ SatoNak Miner: %s | Free heap: %d\n", minerName.c_str(), ESP.getFreeHeap());
+    return true;
+  } else {
+    Serial.println("❌ SatoNak miner: invalid response");
+    Serial.println("↪︎ Payload: " + payload.substring(0, 100));
+    return false;
+  }
+}
+
+// Fetch block height from SatoNak API
+bool fetchHeightFromSatoNak() {
+  if (ESP.getFreeHeap() < 160000) {
+    Serial.println("❌ Low heap; skipping SatoNak height fetch");
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("🌐 WiFi not connected; skipping SatoNak height fetch");
+    return false;
+  }
+
+  String full = String(SATONAK_BASE) + String(SATONAK_HEIGHT);
+  Serial.print("🌐 GET "); Serial.println(full);
+
+  HTTPClient http;
+  http.setTimeout(4000);
+  http.setConnectTimeout(2500);
+  http.useHTTP10(true);
+  http.setReuse(false);
+
+  if (!http.begin(full)) {
+    Serial.println("❌ http.begin failed (SatoNak height)");
+    return false;
+  }
+
+  int rc = http.GET();
+  if (rc != 200) {
+    Serial.printf("❌ SatoNak height GET failed (%d)\n", rc);
+    http.end();
+    return false;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  // For simple text response, parse as integer
+  payload.trim();
+  int newHeight = payload.toInt();
+  if (newHeight > 0 && newHeight > blockHeight - 100) { // sanity check
+    blockHeight = newHeight;
+    sprintf(blockText, "%d", blockHeight);
+    Serial.printf("✅ SatoNak Height: %d | Free heap: %d\n", blockHeight, ESP.getFreeHeap());
+    return true;
+  } else {
+    Serial.println("❌ SatoNak height: invalid response");
+    Serial.println("↪︎ Payload: " + payload.substring(0, 50));
+    return false;
+  }
+}
+
 
     void fetchBlockHeight()
     {
-      if (ESP.getFreeHeap() < 160000)
-      {
-        Serial.println("❌ Not enough heap to safely fetch. Skipping BTC fetch.");
+      // Try SatoNak first, then fallback to blockchain.info
+      if (fetchHeightFromSatoNak()) {
+        Serial.println("✅ Block height fetched from SatoNak");
         return;
       }
-      Serial.println("🔄 Fetching Block Height...");
+      
+      Serial.println("⚠️ SatoNak failed, trying blockchain.info fallback");
+      
+      if (ESP.getFreeHeap() < 160000)
+      {
+        Serial.println("❌ Not enough heap to safely fetch. Skipping block height fetch.");
+        return;
+      }
+      Serial.println("🔄 Fetching Block Height from blockchain.info...");
       HTTPClient http;
       http.begin(BLOCK_API);
       if (http.GET() == 200)
@@ -593,6 +814,9 @@ void loadSavedSettingsAndConnect() {
       P.setFont(nullptr);
       // P.setIntensity(brightnessLevel);
 
+      randomSeed(esp_random());
+
+
       // Show Welcome Loop
       if (!wifiConnected)
       {
@@ -787,6 +1011,7 @@ Serial.println(bottomLine);
 
       // ✅ Monitor heap health every 60 seconds
       static unsigned long lastMemoryCheck = 0;
+      static unsigned long lastHeapLog = 0;
       if (currentMillis - lastMemoryCheck >= 60000)
       {
         Serial.printf("🧠 Free heap: %d | Min ever: %d\n", ESP.getFreeHeap(), ESP.getMinFreeHeap());
@@ -874,21 +1099,33 @@ if (WiFi.status() == WL_CONNECTED) {
       case 0:
         Serial.println("🖥️ Displaying BLOCK screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "BLOCK", blockText); 
-        P.displayZoneText(ZONE_UPPER, "BLOCK", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_UPPER, "BLOCK",   PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
         P.displayZoneText(ZONE_LOWER, blockText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
 
-     case 1:
+
+      case 1:
+        Serial.println("🖥️ Displaying MINER screen...");
+        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MINER", minerName.c_str());
+        P.displayZoneText(ZONE_UPPER, "MINED BY", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_LOWER, minerName.c_str(), PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayClear(); //  Force clear
+        P.synchZoneStart(); // Force synchronization
+        break;
+
+      case 2:
         Serial.println("🖥️ Displaying USD PRICE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "USD PRICE", btcText);
         P.displayZoneText(ZONE_UPPER, "USD PRICE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
         P.displayZoneText(ZONE_LOWER, btcText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
-        break;   
-     case 2:
+        break; 
+
+          
+      case 3:
         Serial.println("🖥️ Displaying 24H CHANGE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "24H CHANGE", changeText);
         P.displayZoneText(ZONE_UPPER, "24H CHANGE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -897,19 +1134,10 @@ if (WiFi.status() == WL_CONNECTED) {
         P.synchZoneStart();
         break;
 
-      case 3:
+      case 4:
         Serial.println("🖥️ Displaying SATS/$ screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText);
         P.displayZoneText(ZONE_UPPER, "SATS/USD", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, satsText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayClear(); //  Force clear
-        P.synchZoneStart(); // Force synchronization  
-        break;
-
-      case 4:
-        Serial.println("🖥️ Displaying MOSCOW TIME screen...");
-        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText);
-        P.displayZoneText(ZONE_UPPER, "MOSCOW TIME", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
         P.displayZoneText(ZONE_LOWER, satsText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization  
@@ -923,14 +1151,18 @@ if (WiFi.status() == WL_CONNECTED) {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
+
+        
       case 6:
-        Serial.println("🖥️ Displaying TIME screen...");
+        Serial.println("🖥️ Displaying TIME and City screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "TIME", timeText);
         P.displayZoneText(ZONE_UPPER, savedCity.c_str(), PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
         P.displayZoneText(ZONE_LOWER, timeText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
+
+        
       case 7:
         Serial.println("🖥️ Displaying DAY/DATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", dayText, dateText);
@@ -939,6 +1171,8 @@ if (WiFi.status() == WL_CONNECTED) {
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
+
+        
       case 8: {
         Serial.println("🖥️ Displaying WEATHER screen...");
         static char tempDisplay[16];
@@ -959,17 +1193,28 @@ if (WiFi.status() == WL_CONNECTED) {
         break;
       }
 
-      case 9:// This is for the models we ship but can be changed for custom units
+      
+
+      case 9:
+        Serial.println("🖥️ Displaying MOSCOW TIME screen...");
+        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText);
+        P.displayZoneText(ZONE_UPPER, "MOSCOW TIME", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_LOWER, satsText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayClear(); //  Force clear
+        P.synchZoneStart(); // Force synchronization  
+        break;
+
+
+      case 10:// This is for the models we ship but can be changed for custom units
         P.displayZoneText(ZONE_UPPER, "CRYPTO", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
-        P.displayZoneText(ZONE_LOWER, "CLOAKS", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
+        P.displayZoneText(ZONE_LOWER, "CLOAKS",      PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
         P.displayClear();
         P.synchZoneStart();
         break;
     }
 
       Serial.println("✅ Screen update complete.");
-      displayCycle = (displayCycle + 1) % 10;
-      P.displayClear();
-      P.synchZoneStart();
+      displayCycle = (displayCycle + 1) % 11;
+      
     }
   }
