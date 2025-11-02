@@ -136,6 +136,8 @@ int btcPrice = 0, blockHeight = 0, feeRate = 0, satsPerDollar = 0;
 char btcText[16], blockText[16], feeText[16], satsText[16];
 char timeText[16], dateText[16], dayText[16];
 char hashrateText[16];  // New global for hashrate display
+char circSupplyText[16];  // New global for circulating supply top line  
+char circPercentText[16]; // New global for circulating supply bottom line
 float latitude = 0.0;
 float longitude = 0.0;
 String weatherCondition = "Unknown";
@@ -144,6 +146,7 @@ float btcChange24h = 0.0;
 char changeText[16];
 String minerName = "Unknown";
 String hashrate = "Unknown";  // New global for hashrate data
+String circSupply = "Unknown"; // New global for circulating supply data
 
 String formatWithCommas(int number)
 {
@@ -178,6 +181,21 @@ String formatWithCommas(int number)
 MD_Parola P = MD_Parola(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
 // Brightness: 0 = dimmest, 15 = brightest
 uint8_t BRIGHTNESS = 12;
+
+// Function to adjust brightness
+void setBrightness(uint8_t level) {
+  if (level > 15) level = 15;  // Clamp to max
+  BRIGHTNESS = level;
+  P.setIntensity(BRIGHTNESS);
+  Serial.printf("💡 Brightness set to: %d/15\n", BRIGHTNESS);
+}
+
+// Function to cycle brightness (for potential button control)
+void cycleBrightness() {
+  BRIGHTNESS = (BRIGHTNESS + 3) % 16;  // Step by 3 for noticeable changes
+  if (BRIGHTNESS == 0) BRIGHTNESS = 3; // Don't go completely dark
+  setBrightness(BRIGHTNESS);
+}
 unsigned long lastFetchTime = 0;
 uint8_t cycle = 0;             // 🔥 Needed for animation control
 unsigned long lastApiCall = 0; // 🔥 Needed for fetch timing
@@ -654,19 +672,107 @@ bool fetchHashrateFromSatoNak() {
   String payload = http.getString();
   http.end();
 
-  // For simple text response, just use the payload directly
+  // Parse and format the hashrate number
   payload.trim();
   if (payload.length() > 0 && payload.length() < 32 && payload != "na") {
-    hashrate = payload;
-    strncpy(hashrateText, hashrate.c_str(), sizeof(hashrateText));
-    hashrateText[sizeof(hashrateText) - 1] = '\0';
-    Serial.printf("✅ SatoNak Hashrate: %s | Free heap: %d\n", hashrate.c_str(), ESP.getFreeHeap());
-    return true;
-  } else {
-    Serial.println("❌ SatoNak hashrate: invalid response");
-    Serial.println("↪︎ Payload: " + payload.substring(0, 100));
+    float hashrateNum = payload.toFloat();
+    if (hashrateNum > 0) {
+      hashrate = payload; // Store raw value
+      
+      // Format for display: show actual EH/s value with proper formatting
+      // The API likely returns values in EH/s already, so just format nicely
+      if (hashrateNum >= 1000.0) {
+        // For values >= 1000 EH/s, show with comma (e.g., "1,234.5 EH/s")
+        int thousands = (int)(hashrateNum / 1000.0);
+        float remainder = hashrateNum - (thousands * 1000.0);
+        snprintf(hashrateText, sizeof(hashrateText), "%d,%.1f EH/s", thousands, remainder);
+      } else {
+        // For values < 1000 EH/s, show without comma (e.g., "987.3 EH/s")
+        snprintf(hashrateText, sizeof(hashrateText), "%.1f EH/s", hashrateNum);
+      }
+      
+      Serial.printf("✅ SatoNak Hashrate: %s EH/s -> Display: %s | Free heap: %d\n", 
+                    hashrate.c_str(), hashrateText, ESP.getFreeHeap());
+      return true;
+    }
+  }
+  
+  Serial.println("❌ SatoNak hashrate: invalid response");
+  Serial.println("↪︎ Payload: " + payload.substring(0, 100));
+  return false;
+}
+
+// Fetch circulating supply from SatoNak API
+bool fetchCircSupplyFromSatoNak() {
+  if (ESP.getFreeHeap() < 160000) {
+    Serial.println("❌ Low heap; skipping SatoNak circulating supply fetch");
     return false;
   }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("🌐 WiFi not connected; skipping SatoNak circulating supply fetch");
+    return false;
+  }
+
+  String full = String(SATONAK_BASE) + "/api/circsupply";
+  Serial.print("🌐 GET "); Serial.println(full);
+
+  HTTPClient http;
+  http.setTimeout(4000);
+  http.setConnectTimeout(2500);
+  http.useHTTP10(true);
+  http.setReuse(false);
+
+  if (!http.begin(full)) {
+    Serial.println("❌ http.begin failed (SatoNak circulating supply)");
+    return false;
+  }
+
+  int rc = http.GET();
+  if (rc != 200) {
+    Serial.printf("❌ SatoNak circulating supply GET failed (%d)\n", rc);
+    http.end();
+    return false;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  // For simple text response, parse as number
+  payload.trim();
+  Serial.printf("🔍 Raw circulating supply payload: '%s'\n", payload.c_str());
+  
+  if (payload.length() > 0 && payload.length() < 16 && payload != "na") {
+    // Remove commas temporarily for parsing
+    String cleanPayload = payload;
+    cleanPayload.replace(",", "");
+    Serial.printf("🔍 After removing commas for parsing: '%s'\n", cleanPayload.c_str());
+    
+    long supply = cleanPayload.toInt();
+    Serial.printf("🔍 Parsed supply as: %ld\n", supply);
+    
+    if (supply > 0 && supply <= 21000000) { // sanity check - supply should be reasonable
+      circSupply = payload; // Store original with commas for display
+      
+      // Format for display: actual numbers with commas
+      // Top: current supply with commas (e.g., "19,942,004")
+      strncpy(circSupplyText, payload.c_str(), sizeof(circSupplyText));
+      circSupplyText[sizeof(circSupplyText) - 1] = '\0';
+      
+      // Bottom: max supply (always "21,000,000")
+      strncpy(circPercentText, "21,000,000", sizeof(circPercentText));
+      circPercentText[sizeof(circPercentText) - 1] = '\0';
+      
+      Serial.printf("✅ SatoNak Circulating Supply: %s (%s, %s) | Free heap: %d\n", 
+                    circSupply.c_str(), circSupplyText, circPercentText, ESP.getFreeHeap());
+      return true;
+    } else {
+      Serial.printf("❌ SatoNak circulating supply: supply value %ld out of range (expected 0-21000000)\n", supply);
+    }
+  }
+  
+  Serial.println("❌ SatoNak circulating supply: invalid response");
+  Serial.println("↪︎ Payload: " + payload.substring(0, 100));
+  return false;
 }
 
 
@@ -865,7 +971,7 @@ bool fetchHashrateFromSatoNak() {
       P.setZone(ZONE_LOWER, 0, ZONE_SIZE - 1);
       P.setZone(ZONE_UPPER, ZONE_SIZE, MAX_DEVICES - 1);
       P.setFont(nullptr);
-      // P.setIntensity(brightnessLevel);
+      P.setIntensity(BRIGHTNESS);  // Set initial brightness
 
       randomSeed(esp_random());
 
@@ -946,6 +1052,22 @@ bool fetchHashrateFromSatoNak() {
       request->send(200, "text/plain", getShortMAC());
     });
 
+      // Brightness control endpoint
+      server.on("/brightness", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (request->hasParam("level")) {
+          String levelStr = request->getParam("level")->value();
+          uint8_t newBrightness = levelStr.toInt();
+          if (newBrightness >= 1 && newBrightness <= 15) {
+            setBrightness(newBrightness);
+            request->send(200, "text/plain", "Brightness set to " + String(BRIGHTNESS));
+          } else {
+            request->send(400, "text/plain", "Invalid brightness level. Use 1-15");
+          }
+        } else {
+          request->send(200, "text/plain", "Current brightness: " + String(BRIGHTNESS) + "/15");
+        }
+      });
+
 
       // Captive Portal Redirect
       server.onNotFound([](AsyncWebServerRequest *request)
@@ -967,6 +1089,7 @@ bool fetchHashrateFromSatoNak() {
       fetchBlockHeight();
       fetchMinerFromSatoNak();
       fetchHashrateFromSatoNak();
+      fetchCircSupplyFromSatoNak();
       fetchFeeRate();
       fetchTime();
       fetchLatLonFromCity();
@@ -1108,6 +1231,7 @@ if (WiFi.status() == WL_CONNECTED) {
     fetchBlockHeight();
     fetchMinerFromSatoNak();
     fetchHashrateFromSatoNak();
+    fetchCircSupplyFromSatoNak();
     lastBlock = now;
   }
   // 4) Weather seldom, with a small offset
@@ -1145,6 +1269,15 @@ if (WiFi.status() == WL_CONNECTED) {
         break;
 
       case 2:
+        Serial.println("🖥️ Displaying CIRCULATING SUPPLY screen...");
+        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", circSupplyText, circPercentText);
+        P.displayZoneText(ZONE_UPPER, circSupplyText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_LOWER, circPercentText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayClear(); //  Force clear
+        P.synchZoneStart(); // Force synchronization
+        break;
+
+      case 3:
         Serial.println("🖥️ Displaying USD PRICE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "USD PRICE", btcText);
         P.displayZoneText(ZONE_UPPER, "USD PRICE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1154,7 +1287,7 @@ if (WiFi.status() == WL_CONNECTED) {
         break; 
 
           
-      case 3:
+      case 4:
         Serial.println("🖥️ Displaying 24H CHANGE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "24H CHANGE", changeText);
         P.displayZoneText(ZONE_UPPER, "24H CHANGE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1163,7 +1296,7 @@ if (WiFi.status() == WL_CONNECTED) {
         P.synchZoneStart();
         break;
 
-      case 4:
+      case 5:
         Serial.println("🖥️ Displaying SATS/$ screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText);
         P.displayZoneText(ZONE_UPPER, "SATS/USD", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1172,7 +1305,7 @@ if (WiFi.status() == WL_CONNECTED) {
         P.synchZoneStart(); // Force synchronization  
         break;
         
-      case 5:
+      case 6:
         Serial.println("🖥️ Displaying FEE RATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "FEE RATE", feeText);
         P.displayZoneText(ZONE_UPPER, "FEE RATE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1181,7 +1314,7 @@ if (WiFi.status() == WL_CONNECTED) {
         P.synchZoneStart(); // Force synchronization
         break;
 
-      case 6:
+      case 7:
         Serial.println("🖥️ Displaying HASHRATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "HASHRATE", hashrateText);
         P.displayZoneText(ZONE_UPPER, "HASHRATE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1191,7 +1324,7 @@ if (WiFi.status() == WL_CONNECTED) {
         break;
 
         
-      case 7:
+      case 8:
         Serial.println("🖥️ Displaying TIME and City screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "TIME", timeText);
         P.displayZoneText(ZONE_UPPER, savedCity.c_str(), PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1201,7 +1334,7 @@ if (WiFi.status() == WL_CONNECTED) {
         break;
 
         
-      case 8:
+      case 9:
         Serial.println("🖥️ Displaying DAY/DATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", dayText, dateText);
         P.displayZoneText(ZONE_UPPER, dayText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1211,7 +1344,7 @@ if (WiFi.status() == WL_CONNECTED) {
         break;
 
         
-      case 9: {
+      case 10: {
         Serial.println("🖥️ Displaying WEATHER screen...");
         static char tempDisplay[16];
         snprintf(tempDisplay, sizeof(tempDisplay), (temperature >= 0) ? "+%dC" : "%dC", temperature);
@@ -1233,7 +1366,7 @@ if (WiFi.status() == WL_CONNECTED) {
 
       
 
-      case 10:
+      case 11:
         Serial.println("🖥️ Displaying MOSCOW TIME screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText);
         P.displayZoneText(ZONE_UPPER, "MOSCOW TIME", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
@@ -1243,7 +1376,7 @@ if (WiFi.status() == WL_CONNECTED) {
         break;
 
 
-      case 11:// This is for the models we ship but can be changed for custom units
+      case 12:// This is for the models we ship but can be changed for custom units
         P.displayZoneText(ZONE_UPPER, "CRYPTO", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
         P.displayZoneText(ZONE_LOWER, "CLOAKS",      PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
         P.displayClear();
@@ -1252,7 +1385,7 @@ if (WiFi.status() == WL_CONNECTED) {
     }
 
       Serial.println("✅ Screen update complete.");
-      displayCycle = (displayCycle + 1) % 12;
+      displayCycle = (displayCycle + 1) % 13;
       
     }
   }
