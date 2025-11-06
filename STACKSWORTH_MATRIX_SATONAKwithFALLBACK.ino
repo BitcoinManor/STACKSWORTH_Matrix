@@ -1,4 +1,5 @@
-// 🚀 STACKSWORTH_MATRIX_MASTER: Dual_Row SCROLL_LEFT 20
+// 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
+// Built By BitcoinManor.com
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
@@ -943,6 +944,66 @@ bool fetchAthFromSatoNak() {
   return false;
 }
 
+// Fetch 24H change from SatoNak API
+bool fetchChange24hFromSatoNak() {
+  if (ESP.getFreeHeap() < 160000) {
+    Serial.println("❌ Low heap; skipping SatoNak 24H change fetch");
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("🌐 WiFi not connected; skipping SatoNak 24H change fetch");
+    return false;
+  }
+
+  String full = String(SATONAK_BASE) + "/api/change24h";
+  Serial.print("🌐 GET "); Serial.println(full);
+
+  HTTPClient http;
+  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
+  http.setConnectTimeout(1500); // Reduced from 2500ms 
+  http.useHTTP10(true);
+  http.setReuse(false);
+
+  if (!http.begin(full)) {
+    Serial.println("❌ http.begin failed (SatoNak 24H change)");
+    return false;
+  }
+
+  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
+  int rc = http.GET();
+  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
+  if (rc != 200) {
+    Serial.printf("❌ SatoNak 24H change GET failed (%d)\n", rc);
+    http.end();
+    return false;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  // Parse 24H change - API returns plain text like "+1.29%" or "-2.45%"
+  payload.trim();
+  if (payload.length() > 0 && payload.length() < 16 && payload != "na") {
+    // Extract the numeric value for internal storage
+    String numStr = payload;
+    numStr.replace("+", "");
+    numStr.replace("%", "");
+    btcChange24h = numStr.toFloat();
+    
+    // Store the formatted display text
+    strncpy(changeText, payload.c_str(), sizeof(changeText));
+    changeText[sizeof(changeText) - 1] = '\0';
+    
+    Serial.printf("✅ SatoNak 24H Change: %s (%.2f%%) | Free heap: %d\n", 
+                  changeText, btcChange24h, ESP.getFreeHeap());
+    return true;
+  }
+  
+  Serial.println("❌ SatoNak 24H change: invalid response");
+  Serial.println("↪︎ Payload: " + payload.substring(0, 100));
+  return false;
+}
+
 // Fetch days since ATH from SatoNak API
 bool fetchDaysSinceAthFromSatoNak() {
   if (ESP.getFreeHeap() < 160000) {
@@ -1318,6 +1379,7 @@ bool fetchDaysSinceAthFromSatoNak() {
       fetchCircSupplyFromSatoNak();
       fetchAthFromSatoNak();
       fetchDaysSinceAthFromSatoNak();
+      fetchChange24hFromSatoNak();
       fetchFeeRate();
       fetchTime();
       fetchLatLonFromCity();
@@ -1473,6 +1535,7 @@ if (WiFi.status() == WL_CONNECTED) {
     fetchCircSupplyFromSatoNak();
     fetchAthFromSatoNak();
     fetchDaysSinceAthFromSatoNak();
+    fetchChange24hFromSatoNak();
     lastBlock = now;
     esp_task_wdt_reset(); // Feed watchdog after network operations
   }
@@ -1639,8 +1702,8 @@ if (WiFi.status() == WL_CONNECTED) {
 
 
       case 14:// This is for the models we ship but can be changed for custom units
-        P.displayZoneText(ZONE_UPPER, "YYC", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
-        P.displayZoneText(ZONE_LOWER, "BitDevs", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
+        P.displayZoneText(ZONE_UPPER, "Satoshi", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
+        P.displayZoneText(ZONE_LOWER, "Nakamoto", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
         P.displayClear();
         P.synchZoneStart();
         break;
