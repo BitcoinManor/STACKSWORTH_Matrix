@@ -416,6 +416,26 @@ bool fetchPriceFromSatoNak() {
   String payload = http.getString();
   http.end();
 
+  // Check if payload is plain text (just a number) vs JSON
+  payload.trim();
+  if (payload.length() > 0 && payload.length() < 16 && isdigit(payload.charAt(0))) {
+    // Plain text response - just a price number like "103605.00"
+    double px = payload.toFloat();
+    if (px > 0) {
+      btcPrice = (int)round(px);
+      satsPerDollar = (int)(100000000.0 / px);
+      
+      snprintf(btcText, sizeof(btcText), "$%s", formatWithCommas(btcPrice).c_str());
+      snprintf(satsText, sizeof(satsText), "$1=%d Sats", satsPerDollar);
+      snprintf(satsText2, sizeof(satsText2), "%d Sats", satsPerDollar);
+      
+      Serial.printf("✅ SatoNak Price (plain): %s | Sats/$: %d | Free heap: %d\n",
+                    btcText, satsPerDollar, ESP.getFreeHeap());
+      return true;
+    }
+  }
+
+  // Try parsing as JSON
   DynamicJsonDocument doc(1536);
   DeserializationError e = deserializeJson(doc, payload);
   if (e) {
@@ -604,8 +624,93 @@ bool fetchHeightFromSatoNak() {
       Serial.printf("📈 Free heap after fetch: %d bytes\n", ESP.getFreeHeap());
     }
 
-    void fetchFeeRate() {
-  if (heap_caps_get_free_size(MALLOC_CAP_DEFAULT) < 160 * 1024) {
+// Fetch fee rate from SatoNak API
+bool fetchFeeFromSatoNak() {
+  if (ESP.getFreeHeap() < 160000) {
+    Serial.println("❌ Low heap; skipping SatoNak fee fetch");
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("🌐 WiFi not connected; skipping SatoNak fee fetch");
+    return false;
+  }
+
+  String full = String(SATONAK_BASE) + "/api/fee";
+  Serial.print("🌐 GET "); Serial.println(full);
+
+  HTTPClient http;
+  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
+  http.setConnectTimeout(1500); // Reduced from 2500ms 
+  http.useHTTP10(true);
+  http.setReuse(false);
+
+  if (!http.begin(full)) {
+    Serial.println("❌ http.begin failed (SatoNak fee)");
+    return false;
+  }
+
+  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
+  int rc = http.GET();
+  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
+  if (rc != 200) {
+    Serial.printf("❌ SatoNak fee GET failed (%d)\n", rc);
+    http.end();
+    return false;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  // Check if payload is plain text (just a number) vs JSON
+  payload.trim();
+  if (payload.length() > 0 && payload.length() < 8 && isdigit(payload.charAt(0))) {
+    // Plain text response - just a fee number like "15"
+    int newFee = payload.toInt();
+    if (newFee > 0 && newFee < 1000) { // sanity check
+      feeRate = newFee;
+      snprintf(feeText, sizeof(feeText), "%d sat/vB", feeRate);
+      Serial.printf("✅ SatoNak Fee (plain): %d sat/vB | Free heap: %d\n", feeRate, ESP.getFreeHeap());
+      return true;
+    }
+  }
+
+  // Try parsing as JSON
+  DynamicJsonDocument doc(512);
+  DeserializationError e = deserializeJson(doc, payload);
+  if (e) {
+    Serial.printf("❌ SatoNak fee JSON parse error: %s\n", e.c_str());
+    Serial.println("↪︎ Payload: " + payload.substring(0, 100));
+    return false;
+  }
+
+  // Parse JSON response
+  int newFee = 0;
+  if (doc.containsKey("value")) {
+    newFee = doc["value"];
+  }
+  
+  if (newFee > 0 && newFee < 1000) { // sanity check
+    feeRate = newFee;
+    snprintf(feeText, sizeof(feeText), "%d sat/vB", feeRate);
+    Serial.printf("✅ SatoNak Fee: %d sat/vB | Free heap: %d\n", feeRate, ESP.getFreeHeap());
+    return true;
+  }
+
+  Serial.println("❌ SatoNak fee: invalid response");
+  Serial.println("↪︎ Payload: " + payload.substring(0, 100));
+  return false;
+}
+
+void fetchFeeRate() {
+  // Try SatoNak first, then fallback to mempool.space
+  if (fetchFeeFromSatoNak()) {
+    Serial.println("✅ Fee rate fetched from SatoNak");
+    return;
+  }
+  
+  Serial.println("⚠️ SatoNak failed, trying mempool.space fallback");
+  
+  if (ESP.getFreeHeap() < 160000) {
     Serial.println("🛑 Low heap before Fee fetch; skipping");
     return;
   }
@@ -614,7 +719,7 @@ bool fetchHeightFromSatoNak() {
     return;
   }
 
-  Serial.println("🔄 Fetching Fee Rate…");
+  Serial.println("🔄 Fetching Fee Rate from mempool.space…");
   HTTPClient http;
   // short, explicit timeouts so we never stall long enough to trip WDT
   http.setTimeout(2000);         // Reduced from 3000ms
@@ -1239,14 +1344,19 @@ bool fetchDaysSinceAthFromSatoNak() {
 
      pinMode(BUTTON_PIN, INPUT_PULLUP);  //added this for the Smash Buy Button!!!
 
+      // Initialize watchdog timer BEFORE any HTTP calls
       esp_task_wdt_config_t wdt_config = {
           .timeout_ms = 12000,                             // 12 seconds
           .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // All cores
           .trigger_panic = true                            // Reset if not fed in time
       };
       esp_task_wdt_init(&wdt_config);
-
       esp_task_wdt_add(NULL); // Add current task to WDT
+
+      bootMs = millis();
+
+      // Initial API Fetch
+      Serial.println("🌍 Fetching initial data...");
     }
 
     
