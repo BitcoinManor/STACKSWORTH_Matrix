@@ -366,7 +366,7 @@ void loadSavedSettingsAndConnect() {
     satsPerDollar = 100000000 / btcPrice;
 
     sprintf(btcText, "$%s", formatWithCommas(btcPrice).c_str());
-    sprintf(satsText, "$1 = %d Sats", satsPerDollar);
+    sprintf(satsText, "$1=%d Sats", satsPerDollar);
     sprintf(satsText2, "%d Sats", satsPerDollar);
     snprintf(changeText, sizeof(changeText), "%+.2f%%", btcChange24h);
 
@@ -394,8 +394,8 @@ bool fetchPriceFromSatoNak() {
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
-  http.setTimeout(4000);
-  http.setConnectTimeout(2500);
+  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
+  http.setConnectTimeout(1500); // Reduced from 2500ms 
   http.useHTTP10(true);
   http.setReuse(false);
 
@@ -404,7 +404,9 @@ bool fetchPriceFromSatoNak() {
     return false;
   }
 
+  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
   int rc = http.GET();
+  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
   if (rc != 200) {
     Serial.printf("❌ SatoNak price GET failed (%d)\n", rc);
     http.end();
@@ -457,7 +459,7 @@ bool fetchPriceFromSatoNak() {
   } else {
     snprintf(btcText, sizeof(btcText), "%s", formatWithCommas(btcPrice).c_str());
   }
-  snprintf(satsText,   sizeof(satsText),  "$1 = %d Sats", satsPerDollar);
+  snprintf(satsText,   sizeof(satsText),  "$1=%d Sats", satsPerDollar);
   snprintf(satsText2,  sizeof(satsText2), "%d Sats", satsPerDollar);
   snprintf(changeText, sizeof(changeText), "%+.2f%%", btcChange24h);
 
@@ -481,8 +483,8 @@ bool fetchMinerFromSatoNak() {
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
-  http.setTimeout(4000);
-  http.setConnectTimeout(2500);
+  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
+  http.setConnectTimeout(1500); // Reduced from 2500ms 
   http.useHTTP10(true);
   http.setReuse(false);
 
@@ -491,7 +493,9 @@ bool fetchMinerFromSatoNak() {
     return false;
   }
 
+  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
   int rc = http.GET();
+  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
   if (rc != 200) {
     Serial.printf("❌ SatoNak miner GET failed (%d)\n", rc);
     http.end();
@@ -529,8 +533,8 @@ bool fetchHeightFromSatoNak() {
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
-  http.setTimeout(4000);
-  http.setConnectTimeout(2500);
+  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
+  http.setConnectTimeout(1500); // Reduced from 2500ms 
   http.useHTTP10(true);
   http.setReuse(false);
 
@@ -539,7 +543,9 @@ bool fetchHeightFromSatoNak() {
     return false;
   }
 
+  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
   int rc = http.GET();
+  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
   if (rc != 200) {
     Serial.printf("❌ SatoNak height GET failed (%d)\n", rc);
     http.end();
@@ -611,8 +617,8 @@ bool fetchHeightFromSatoNak() {
   Serial.println("🔄 Fetching Fee Rate…");
   HTTPClient http;
   // short, explicit timeouts so we never stall long enough to trip WDT
-  http.setTimeout(3000);         // total I/O timeout ~3s
-  http.setConnectTimeout(2000);  // TCP connect timeout ~2s
+  http.setTimeout(2000);         // Reduced from 3000ms
+  http.setConnectTimeout(1500);  // Reduced from 2000ms 
   http.useHTTP10(true);          // simpler, avoids chunking issues
   http.setReuse(false);          // no keep-alive reuse
 
@@ -622,7 +628,9 @@ bool fetchHeightFromSatoNak() {
     return;
   }
 
+  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
   int rc = http.GET();
+  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
   if (rc == 200) {
     String payload = http.getString();
     DynamicJsonDocument doc(512);
@@ -658,8 +666,8 @@ bool fetchHashrateFromSatoNak() {
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
-  http.setTimeout(4000);
-  http.setConnectTimeout(2500);
+  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
+  http.setConnectTimeout(1500); // Reduced from 2500ms 
   http.useHTTP10(true);
   http.setReuse(false);
 
@@ -668,7 +676,9 @@ bool fetchHashrateFromSatoNak() {
     return false;
   }
 
+  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
   int rc = http.GET();
+  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
   if (rc != 200) {
     Serial.printf("❌ SatoNak hashrate GET failed (%d)\n", rc);
     http.end();
@@ -709,8 +719,8 @@ bool fetchCircSupplyFromSatoNak() {
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
-  http.setTimeout(4000);
-  http.setConnectTimeout(2500);
+  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
+  http.setConnectTimeout(1500); // Reduced from 2500ms 
   http.useHTTP10(true);
   http.setReuse(false);
 
@@ -719,7 +729,9 @@ bool fetchCircSupplyFromSatoNak() {
     return false;
   }
 
+  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
   int rc = http.GET();
+  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
   if (rc != 200) {
     Serial.printf("❌ SatoNak circulating supply GET failed (%d)\n", rc);
     http.end();
@@ -751,7 +763,7 @@ bool fetchCircSupplyFromSatoNak() {
       circSupplyText[sizeof(circSupplyText) - 1] = '\0';
       
       // Bottom: max supply (always "21,000,000")
-      strncpy(circPercentText, "/21Million", sizeof(circPercentText));
+      strncpy(circPercentText, "/21 Million", sizeof(circPercentText));
       circPercentText[sizeof(circPercentText) - 1] = '\0';
       
       Serial.printf("✅ SatoNak Circulating Supply: %s (%s, %s) | Free heap: %d\n", 
@@ -782,8 +794,8 @@ bool fetchAthFromSatoNak() {
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
-  http.setTimeout(4000);
-  http.setConnectTimeout(2500);
+  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
+  http.setConnectTimeout(1500); // Reduced from 2500ms 
   http.useHTTP10(true);
   http.setReuse(false);
 
@@ -792,7 +804,9 @@ bool fetchAthFromSatoNak() {
     return false;
   }
 
+  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
   int rc = http.GET();
+  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
   if (rc != 200) {
     Serial.printf("❌ SatoNak ATH GET failed (%d)\n", rc);
     http.end();
@@ -809,8 +823,9 @@ bool fetchAthFromSatoNak() {
     if (athPriceNum > 0) {
       athPrice = payload; // Store raw value
       
-      // Format for display - add $ and format nicely
-      snprintf(athText, sizeof(athText), "$%.0f", athPriceNum);
+  // Format for display - add $ and format nicely with commas (e.g. $126,080)
+  // Use existing helper to insert thousand separators
+  snprintf(athText, sizeof(athText), "$%s", formatWithCommas((int)round(athPriceNum)).c_str());
       
       Serial.printf("✅ SatoNak ATH: %s -> Display: %s | Free heap: %d\n", 
                     athPrice.c_str(), athText, ESP.getFreeHeap());
@@ -838,8 +853,8 @@ bool fetchDaysSinceAthFromSatoNak() {
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
-  http.setTimeout(4000);
-  http.setConnectTimeout(2500);
+  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
+  http.setConnectTimeout(1500); // Reduced from 2500ms 
   http.useHTTP10(true);
   http.setReuse(false);
 
@@ -848,7 +863,9 @@ bool fetchDaysSinceAthFromSatoNak() {
     return false;
   }
 
+  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
   int rc = http.GET();
+  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
   if (rc != 200) {
     Serial.printf("❌ SatoNak days since ATH GET failed (%d)\n", rc);
     http.end();
@@ -865,7 +882,7 @@ bool fetchDaysSinceAthFromSatoNak() {
     if (days >= 0) {
       daysSinceAth = payload; // Store raw value
       
-      // Format for display
+      // Format for display - "## Days" format for top row
       snprintf(daysAthText, sizeof(daysAthText), "%d Days", days);
       
       Serial.printf("✅ SatoNak Days Since ATH: %s -> Display: %s | Free heap: %d\n", 
@@ -1280,6 +1297,7 @@ while (!P.displayAnimate()) {
 
 P.displayClear();
 P.synchZoneStart();
+esp_task_wdt_reset(); // Feed watchdog after animation complete
 Serial.print("🎯 Smash Buy: ");
 Serial.print(topLine);
 Serial.print(" / ");
@@ -1324,16 +1342,21 @@ if (WiFi.status() == WL_CONNECTED) {
 
   // 1) BTC every BTC_INTERVAL
   if (now - lastBTC >= BTC_INTERVAL) {
+    esp_task_wdt_reset(); // Feed watchdog before network operations
     fetchBitcoinData();
     lastBTC = now;
+    esp_task_wdt_reset(); // Feed watchdog after network operations
   }
   // 2) Fee at +offset
   else if ((now - lastFee >= (FEE_INTERVAL + FEE_OFFSET)) && (now >= bootMs + FEE_OFFSET)) {
+    esp_task_wdt_reset(); // Feed watchdog before network operations
     fetchFeeRate();
     lastFee = now;
+    esp_task_wdt_reset(); // Feed watchdog after network operations
   }
   // 3) Block height at +offset
   else if ((now - lastBlock >= (BLOCK_INTERVAL + BLOCK_OFFSET)) && (now >= bootMs + BLOCK_OFFSET)) {
+    esp_task_wdt_reset(); // Feed watchdog before network operations
     fetchBlockHeight();
     fetchMinerFromSatoNak();
     fetchHashrateFromSatoNak();
@@ -1341,11 +1364,14 @@ if (WiFi.status() == WL_CONNECTED) {
     fetchAthFromSatoNak();
     fetchDaysSinceAthFromSatoNak();
     lastBlock = now;
+    esp_task_wdt_reset(); // Feed watchdog after network operations
   }
   // 4) Weather seldom, with a small offset
   else if ((now - lastWeather >= (WEATHER_INTERVAL + WEATHER_OFFSET)) && (now >= bootMs + WEATHER_OFFSET)) {
+    esp_task_wdt_reset(); // Feed watchdog before network operations
     fetchWeather();
     lastWeather = now;
+    esp_task_wdt_reset(); // Feed watchdog after network operations
   }
 }
 
@@ -1415,9 +1441,9 @@ if (WiFi.status() == WL_CONNECTED) {
 
       case 6:
         Serial.println("🖥️ Displaying DAYS SINCE ATH screen...");
-        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", daysSinceAth.c_str(), "Days Since ATH");
-        P.displayZoneText(ZONE_UPPER, daysSinceAth.c_str(), PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, "Days Since ATH", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", daysAthText, "Since ATH");
+        P.displayZoneText(ZONE_UPPER, daysAthText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_LOWER, "Since ATH", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
@@ -1503,8 +1529,8 @@ if (WiFi.status() == WL_CONNECTED) {
 
 
       case 14:// This is for the models we ship but can be changed for custom units
-        P.displayZoneText(ZONE_UPPER, "CRYPTO", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
-        P.displayZoneText(ZONE_LOWER, "CLOAKS",      PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
+        P.displayZoneText(ZONE_UPPER, "YYC", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
+        P.displayZoneText(ZONE_LOWER, "BitDevs", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
         P.displayClear();
         P.synchZoneStart();
         break;
