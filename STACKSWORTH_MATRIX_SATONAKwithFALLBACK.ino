@@ -1,3 +1,4 @@
+
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
 #include <MD_Parola.h>
@@ -129,8 +130,32 @@ String mapWeatherCode(int code)
 
 // Time Config
 const char *ntpServer = "pool.ntp.org";
-long gmtOffset_sec = -7 * 3600;
-int daylightOffset_sec = 3600;
+// 🌍 Timezone strings that auto-handle DST (no more manual updates needed!)
+const char* TIMEZONE_STRINGS[] = {
+  "UTC0",                                    // UTC +0
+  "GMT0BST,M3.5.0/1,M10.5.0",              // London +0/+1
+  "CET-1CEST,M3.5.0,M10.5.0/3",            // Paris/Berlin +1/+2
+  "EET-2EEST,M3.5.0/3,M10.5.0/4",          // Helsinki +2/+3
+  "MSK-3",                                  // Moscow +3 (no DST)
+  "JST-9",                                  // Tokyo +9 (no DST)
+  "AEST-10AEDT,M10.1.0,M4.1.0/3",          // Sydney +10/+11
+  "NZST-12NZDT,M9.5.0,M4.1.0/3",           // Auckland +12/+13
+  "HST10",                                  // Hawaii -10 (no DST)
+  "AKST9AKDT,M3.2.0,M11.1.0",              // Alaska -9/-8
+  "PST8PDT,M3.2.0,M11.1.0",                // Pacific -8/-7
+  "MST7MDT,M3.2.0,M11.1.0",                // Mountain -7/-6
+  "CST6CDT,M3.2.0,M11.1.0",                // Central -6/-5
+  "EST5EDT,M3.2.0,M11.1.0"                 // Eastern -5/-4
+};
+
+const char* TIMEZONE_NAMES[] = {
+  "UTC (+0)", "London (+0/+1)", "Paris (+1/+2)", "Helsinki (+2/+3)",
+  "Moscow (+3)", "Tokyo (+9)", "Sydney (+10/+11)", "Auckland (+12/+13)",
+  "Hawaii (-10)", "Alaska (-9/-8)", "Pacific (-8/-7)", "Mountain (-7/-6)",
+  "Central (-6/-5)", "Eastern (-5/-4)"
+};
+
+#define NUM_TIMEZONES (sizeof(TIMEZONE_STRINGS) / sizeof(TIMEZONE_STRINGS[0]))
 
 // Global Data Variables
 int btcPrice = 0, blockHeight = 0, feeRate = 0, satsPerDollar = 0;
@@ -305,10 +330,15 @@ void loadSavedSettingsAndConnect() {
       Serial.println(WiFi.localIP());
       wifiConnected = true; // 👉 set this!!
       
-      if (savedTimezone != -99) {
-        gmtOffset_sec = savedTimezone * 3600;
-        configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-        Serial.println("🕒 Timezone configured");
+      // 🌍 Configure timezone using proper timezone strings (auto-handles DST!)
+      if (savedTimezone != -99 && savedTimezone >= 0 && savedTimezone < NUM_TIMEZONES) {
+        const char* tzString = TIMEZONE_STRINGS[savedTimezone];
+        configTzTime(tzString, ntpServer);
+        Serial.printf("🕒 Timezone configured: %s (%s)\n", TIMEZONE_NAMES[savedTimezone], tzString);
+      } else {
+        // Default to Mountain Time if no valid timezone saved
+        configTzTime(TIMEZONE_STRINGS[11], ntpServer); // Mountain Time
+        Serial.println("🕒 Using default Mountain Time timezone");
       }
     } else {
       Serial.println("\n❌ Failed to connect to WiFi, falling back to Access Point...");
@@ -1275,9 +1305,11 @@ bool fetchDaysSinceAthFromSatoNak() {
         }
       }
 
-      // 🕒 Time Config
-      Serial.println("🕒 Configuring time...");
-      configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+      // 🕒 Time Config - only set default if not already configured in loadSavedSettingsAndConnect()
+      if (!wifiConnected) {
+        Serial.println("🕒 Configuring default timezone (Mountain Time)...");
+        configTzTime(TIMEZONE_STRINGS[11], ntpServer); // Default to Mountain Time
+      }
 
       // Serve Custom HTML File
       server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
