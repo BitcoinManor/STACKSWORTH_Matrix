@@ -1,6 +1,6 @@
 
-// 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API 
-// v1.1.9
+
+// 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
@@ -44,6 +44,10 @@ bool buttonPressed = false;
 String savedSSID;
 String savedPassword;
 String savedCity;
+String savedCurrency;  // 🌍 New: User's preferred currency (USD, EUR, etc.)
+String savedTheme;     // 🎨 New: User's preferred theme (scroll, fade)
+String savedTopText;   // 📝 New: User's custom top row message (max 10 chars)
+String savedBottomText;// 📝 New: User's custom bottom row message (max 10 chars)
 int savedTimezone = -99;
 
 
@@ -71,8 +75,26 @@ static const char* SATONAK_PRICE  = "/api/price";   // supports ?fiat=EUR etc.
 static const char* SATONAK_HEIGHT = "/api/height";  // (for later)
 static const char* SATONAK_MINER  = "/api/miner";   // (for later)
 
-// default fiat (can be "USD", "EUR", etc.)
-static const char* FIAT_CODE = "USD";
+// default fiat (can be "USD", "EUR", etc.) - now loaded from preferences
+static String getCurrentFiatCode() {
+  return savedCurrency.length() > 0 ? savedCurrency : "USD";
+}
+
+// Get currency symbol for display
+static String getCurrencySymbol() {
+  String fiat = getCurrentFiatCode();
+  if (fiat == "USD") return "$";
+  if (fiat == "CAD") return "$";       // Clean $ since top row shows "CAD PRICE"
+  if (fiat == "EUR") return "";        // Clean number since top row shows "EUR PRICE"  
+  if (fiat == "GBP") return "";        // Clean number since top row shows "GBP PRICE"
+  if (fiat == "JPY") return "";        // Clean number since top row shows "JPY PRICE" (avoid encoding issues)
+  if (fiat == "AUD") return "$";       // Clean $ since top row shows "AUD PRICE"
+  if (fiat == "CHF") return "";        // Clean number since top row shows "CHF PRICE"
+  if (fiat == "CNY") return "";        // Clean number since top row shows "CNY PRICE"
+  if (fiat == "SEK") return "";        // Clean number since top row shows "SEK PRICE"
+  if (fiat == "NOK") return "";        // Clean number since top row shows "NOK PRICE"
+  return ""; // fallback to no symbol
+}
 
 static inline String satonakUrl(const char* path, const char* fiat = nullptr) {
   String u = String(SATONAK_BASE) + String(path);
@@ -80,6 +102,20 @@ static inline String satonakUrl(const char* path, const char* fiat = nullptr) {
     u += "?fiat="; u += fiat;
   }
   return u;
+}
+
+// 🎨 Get animation effects based on user's theme preference
+static void getThemeEffects(textEffect_t &effectIn, textEffect_t &effectOut) {
+  if (savedTheme == "fade") {
+    Serial.println("🎨 Using WIPE theme (power-efficient alternative to fade)");
+    effectIn = PA_WIPE_CURSOR;
+    effectOut = PA_WIPE_CURSOR;
+  } else {
+    // Default to scroll theme (safe fallback)
+    Serial.println("🎨 Using SCROLL theme");
+    effectIn = PA_SCROLL_LEFT;
+    effectOut = PA_SCROLL_LEFT;
+  }
 }
 
 
@@ -193,6 +229,23 @@ String formatWithCommas(int number)
   return result;
 }
 
+// Save successful values to cache for fallback use
+void saveDisplayCache() {
+  prefs.begin("cache", false);  // write mode
+  prefs.putString("btcText", String(btcText));
+  prefs.putString("blockText", String(blockText));
+  prefs.putString("feeText", String(feeText));
+  prefs.putString("satsText", String(satsText));
+  prefs.putString("changeText", String(changeText));
+  prefs.putString("athText", String(athText));
+  prefs.putString("daysAthText", String(daysAthText));
+  prefs.putString("hashrateText", String(hashrateText));
+  prefs.putString("circSupplyText", String(circSupplyText));
+  prefs.putString("minerName", minerName);
+  prefs.end();
+  Serial.println("💾 Display cache saved");
+}
+
 // LED Matrix Config
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
 #define MAX_ZONES 2
@@ -211,14 +264,23 @@ String formatWithCommas(int number)
 
 MD_Parola P = MD_Parola(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
 // Brightness: 0 = dimmest, 15 = brightest
-uint8_t BRIGHTNESS = 12;
+uint8_t BRIGHTNESS = 2;
 
 // Function to adjust brightness
 void setBrightness(uint8_t level) {
   if (level > 15) level = 15;  // Clamp to max
   BRIGHTNESS = level;
-  P.setIntensity(BRIGHTNESS);
-  Serial.printf("💡 Brightness set to: %d/15\n", BRIGHTNESS);
+  
+  // Set intensity for each zone individually (required for multi-zone displays)
+  P.setIntensity(ZONE_UPPER, BRIGHTNESS);
+  P.setIntensity(ZONE_LOWER, BRIGHTNESS);
+  
+  // Save brightness setting to preferences
+  prefs.begin("stacksworth", false);
+  prefs.putUChar("brightness", BRIGHTNESS);
+  prefs.end();
+  
+  Serial.printf("💡 Brightness set to: %d/15 for all zones\n", BRIGHTNESS);
 }
 
 // Function to cycle brightness (for potential button control)
@@ -302,7 +364,12 @@ void loadSavedSettingsAndConnect() {
   savedSSID = prefs.getString("ssid", "");
   savedPassword = prefs.getString("password", "");
   savedCity = prefs.getString("city", "");
+  savedCurrency = prefs.getString("currency", "USD");  // 🌍 Default to USD
+  savedTheme = prefs.getString("theme", "scroll");     // 🎨 Default to scroll
+  savedTopText = prefs.getString("toptext", "");       // 📝 Custom top row message
+  savedBottomText = prefs.getString("bottomtext", ""); // 📝 Custom bottom row message
   savedTimezone = prefs.getInt("timezone", -99);
+  BRIGHTNESS = prefs.getUChar("brightness", 2);       // 💡 Load saved brightness, default to 2
 
   prefs.end();
 
@@ -311,6 +378,11 @@ void loadSavedSettingsAndConnect() {
     Serial.println("SSID: " + savedSSID);
     Serial.println("Password: " + savedPassword);
     Serial.println("City: " + savedCity);
+    Serial.println("Currency: " + savedCurrency);        // 🌍 New
+    Serial.println("Theme: " + savedTheme);              // 🎨 New
+    Serial.println("Custom Top: " + savedTopText);       // 📝 New
+    Serial.println("Custom Bottom: " + savedBottomText); // 📝 New
+    Serial.printf("Brightness: %d/15\n", BRIGHTNESS);    // 💡 New
     Serial.print("Timezone offset (hours): ");
     Serial.println(savedTimezone);
 
@@ -397,8 +469,18 @@ void loadSavedSettingsAndConnect() {
     btcChange24h = doc["bitcoin"]["usd_24h_change"];
     satsPerDollar = 100000000 / btcPrice;
 
-    sprintf(btcText, "$%s", formatWithCommas(btcPrice).c_str());
-    sprintf(satsText, "$1=%d Sats", satsPerDollar);
+    String symbol = getCurrencySymbol();
+    String currentFiat = getCurrentFiatCode();
+    
+    // Note: CoinGecko fallback only provides USD, so if user wants other currency,
+    // they'll need to wait for SatoNak to come back online for FX conversion
+    if (currentFiat == "USD") {
+      sprintf(btcText, "$%s", formatWithCommas(btcPrice).c_str());
+      sprintf(satsText, "$1=%d Sats", satsPerDollar);
+    } else {
+      sprintf(btcText, "$%s*", formatWithCommas(btcPrice).c_str()); // * indicates USD fallback
+      sprintf(satsText, "$1=%d Sats*", satsPerDollar); // * shows it's USD fallback
+    }
     sprintf(satsText2, "%d Sats", satsPerDollar);
     snprintf(changeText, sizeof(changeText), "%+.2f%%", btcChange24h);
 
@@ -422,7 +504,8 @@ bool fetchPriceFromSatoNak() {
     return false;
   }
 
-  String full = satonakUrl(SATONAK_PRICE, FIAT_CODE); // e.g. /api/price?fiat=USD
+  String currentFiat = getCurrentFiatCode();
+  String full = satonakUrl(SATONAK_PRICE, currentFiat.c_str()); // e.g. /api/price?fiat=EUR
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
@@ -433,6 +516,7 @@ bool fetchPriceFromSatoNak() {
 
   if (!http.begin(full)) {
     Serial.println("❌ http.begin failed (SatoNak)");
+    http.end(); // ⚠️ CRITICAL: Always call end() even on begin() failure to free resources
     return false;
   }
 
@@ -457,9 +541,12 @@ bool fetchPriceFromSatoNak() {
       btcPrice = (int)round(px);
       satsPerDollar = (int)(100000000.0 / px);
       
-      snprintf(btcText, sizeof(btcText), "$%s", formatWithCommas(btcPrice).c_str());
-      snprintf(satsText, sizeof(satsText), "$1=%d Sats", satsPerDollar);
-      snprintf(satsText2, sizeof(satsText2), "%d Sats", satsPerDollar);
+      String symbol = getCurrencySymbol();
+      snprintf(btcText, sizeof(btcText), "%s%s", symbol.c_str(), formatWithCommas(btcPrice).c_str());
+      
+      // 🌍 Show sats per user's currency, not always USD!
+      sprintf(satsText, "%s1=%d Sats", symbol.c_str(), satsPerDollar);
+      sprintf(satsText2, "%d Sats", satsPerDollar);
       
       Serial.printf("✅ SatoNak Price (plain): %s | Sats/$: %d | Free heap: %d\n",
                     btcText, satsPerDollar, ESP.getFreeHeap());
@@ -476,8 +563,8 @@ bool fetchPriceFromSatoNak() {
     return false;
   }
 
-  // Respect your FIAT_CODE (e.g., "USD"/"EUR")
-  String key = String(FIAT_CODE); key.toLowerCase();
+  // Respect your current fiat setting (e.g., "USD"/"EUR"/"CAD")
+  String key = currentFiat; key.toLowerCase();
 
   double px = 0.0;
   if (doc.containsKey("price") && doc["price"].is<JsonObject>()) {
@@ -506,13 +593,17 @@ bool fetchPriceFromSatoNak() {
   btcChange24h  = (float)change;
   satsPerDollar = (int)sps;
 
-  if (key == "usd") {
+  String symbol = getCurrencySymbol();
+  
+  if (currentFiat == "USD") {
     snprintf(btcText, sizeof(btcText), "$%s", formatWithCommas(btcPrice).c_str());
   } else {
-    snprintf(btcText, sizeof(btcText), "%s", formatWithCommas(btcPrice).c_str());
+    snprintf(btcText, sizeof(btcText), "%s%s", symbol.c_str(), formatWithCommas(btcPrice).c_str());
   }
-  snprintf(satsText,   sizeof(satsText),  "$1=%d Sats", satsPerDollar);
-  snprintf(satsText2,  sizeof(satsText2), "%d Sats", satsPerDollar);
+  
+  // 🌍 Show sats per user's selected currency!
+  sprintf(satsText,   "%s1=%d Sats", symbol.c_str(), satsPerDollar);
+  sprintf(satsText2,  "%d Sats", satsPerDollar);
   snprintf(changeText, sizeof(changeText), "%+.2f%%", btcChange24h);
 
   Serial.printf("✅ SatoNak Price: %s | 24h: %+.2f%% | Sats/$: %d | Free heap: %d\n",
@@ -542,6 +633,7 @@ bool fetchMinerFromSatoNak() {
 
   if (!http.begin(full)) {
     Serial.println("❌ http.begin failed (SatoNak miner)");
+    http.end(); // ⚠️ CRITICAL: Always call end() even on begin() failure to free resources
     return false;
   }
 
@@ -592,6 +684,7 @@ bool fetchHeightFromSatoNak() {
 
   if (!http.begin(full)) {
     Serial.println("❌ http.begin failed (SatoNak height)");
+    http.end(); // ⚠️ CRITICAL: Always call end() even on begin() failure to free resources
     return false;
   }
 
@@ -678,6 +771,7 @@ bool fetchFeeFromSatoNak() {
 
   if (!http.begin(full)) {
     Serial.println("❌ http.begin failed (SatoNak fee)");
+    http.end(); // ⚠️ CRITICAL: Always call end() even on begin() failure to free resources
     return false;
   }
 
@@ -762,6 +856,7 @@ void fetchFeeRate() {
   // FEES_API should be your existing endpoint string, unchanged
   if (!http.begin(httpClient, FEES_API)) {
     Serial.println("❌ http.begin failed; keeping last fee value");
+    http.end(); // ⚠️ CRITICAL: Always call end() even on begin() failure to free resources
     return;
   }
 
@@ -810,6 +905,7 @@ bool fetchHashrateFromSatoNak() {
 
   if (!http.begin(full)) {
     Serial.println("❌ http.begin failed (SatoNak hashrate)");
+    http.end(); // ⚠️ CRITICAL: Always call end() even on begin() failure to free resources
     return false;
   }
 
@@ -863,6 +959,7 @@ bool fetchCircSupplyFromSatoNak() {
 
   if (!http.begin(full)) {
     Serial.println("❌ http.begin failed (SatoNak circulating supply)");
+    http.end(); // ⚠️ CRITICAL: Always call end() even on begin() failure to free resources
     return false;
   }
 
@@ -938,6 +1035,7 @@ bool fetchAthFromSatoNak() {
 
   if (!http.begin(full)) {
     Serial.println("❌ http.begin failed (SatoNak ATH)");
+    http.end(); // ⚠️ CRITICAL: Always call end() even on begin() failure to free resources
     return false;
   }
 
@@ -997,6 +1095,7 @@ bool fetchChange24hFromSatoNak() {
 
   if (!http.begin(full)) {
     Serial.println("❌ http.begin failed (SatoNak 24H change)");
+    http.end(); // ⚠️ CRITICAL: Always call end() even on begin() failure to free resources
     return false;
   }
 
@@ -1057,6 +1156,7 @@ bool fetchDaysSinceAthFromSatoNak() {
 
   if (!http.begin(full)) {
     Serial.println("❌ http.begin failed (SatoNak days since ATH)");
+    http.end(); // ⚠️ CRITICAL: Always call end() even on begin() failure to free resources
     return false;
   }
 
@@ -1243,8 +1343,51 @@ bool fetchDaysSinceAthFromSatoNak() {
     void setup()
     {
       Serial.begin(115200);
-      Serial.println("🚀 Starting STACKSWORTH Matrix Setup...");
+      delay(100); // Allow serial to stabilize
+      
+      // 🔥 CRITICAL SAFETY: Initialize LED Matrix FIRST to prevent power surge and fire hazard
+      // Must happen BEFORE any other operations (SPIFFS, WiFi, etc.)
+      Serial.println("🛡️ SAFETY: Initializing LED Matrix immediately...");
+      
+      // Initialize SPI and LED driver chips with safe defaults
+      P.begin(MAX_ZONES);
+      delay(50); // Give MAX7219 chips time to initialize properly
+      
+      P.setZone(ZONE_LOWER, 0, ZONE_SIZE - 1);
+      P.setZone(ZONE_UPPER, ZONE_SIZE, MAX_DEVICES - 1);
+      P.setFont(nullptr);
+      
+      // Set to shutdown mode first, then configure safely
+      // Put MAX7219 into shutdown immediately (LEDs OFF)
+      P.displayShutdown(true);
+      delay(10);
 
+      // Wake briefly so register writes actually apply
+      P.displayShutdown(false);
+      delay(10);
+
+      // Clear any random latched data
+      P.displayClear();
+      // Set safe, dim startup brightness
+      P.setIntensity(ZONE_UPPER, 1);
+      P.setIntensity(ZONE_LOWER, 1);
+      // Clear again to ensure blank display with brightness applied
+      P.displayClear();
+      
+      Serial.println("✅ LED Matrix safely initialized at brightness 1");
+      
+      // 🐕 Initialize watchdog timer EARLY to prevent crashes during setup
+      Serial.println("🐕 Initializing Watchdog Timer...");
+      esp_task_wdt_config_t wdt_config = {
+          .timeout_ms = 12000,                             // 12 seconds
+          .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // All cores
+          .trigger_panic = true                            // Reset if not fed in time
+      };
+      esp_task_wdt_init(&wdt_config);
+      esp_task_wdt_add(NULL); // Add current task to WDT
+      Serial.println("✅ Watchdog Timer initialized");
+      
+      Serial.println("🚀 Starting STACKSWORTH Matrix Setup...");
 
       //Adding MAC Address to ID
       macID = getShortMAC();
@@ -1283,20 +1426,16 @@ bool fetchDaysSinceAthFromSatoNak() {
       Serial.println("📡 Loading saved WiFi and settings...");
       loadSavedSettingsAndConnect();
 
-      // LED Matrix Startup
-      Serial.println("💡 Initializing LED Matrix...");
-      P.begin(MAX_ZONES);
-      P.setZone(ZONE_LOWER, 0, ZONE_SIZE - 1);
-      P.setZone(ZONE_UPPER, ZONE_SIZE, MAX_DEVICES - 1);
-      P.setFont(nullptr);
-      P.setIntensity(BRIGHTNESS);  // Set initial brightness
-
       randomSeed(esp_random());
 
-
-      // Show Welcome Loop
+      // Show Welcome Loop BEFORE restoring full brightness (if WiFi not connected)
       if (!wifiConnected)
       {
+        // Set a visible brightness for the welcome message
+        Serial.println("💡 Setting brightness for welcome message...");
+        P.setIntensity(ZONE_UPPER, 3);  // Medium-low brightness for setup
+        P.setIntensity(ZONE_LOWER, 3);
+        
         // Show Welcome Loop only if WiFi NOT connected
         unsigned long startTime = millis();
         while (millis() - startTime < 21000)
@@ -1305,6 +1444,13 @@ bool fetchDaysSinceAthFromSatoNak() {
           P.displayAnimate();
         }
       }
+
+      // Now restore user's preferred brightness after welcome screens
+      Serial.println("💡 Restoring user brightness settings...");
+      P.setIntensity(ZONE_UPPER, BRIGHTNESS);
+      P.setIntensity(ZONE_LOWER, BRIGHTNESS);
+      
+      Serial.printf("💡 Brightness restored to: %d/15 for all zones\n", BRIGHTNESS);
 
       // 🕒 Time Config - only set default if not already configured in loadSavedSettingsAndConnect()
       if (!wifiConnected) {
@@ -1331,17 +1477,33 @@ bool fetchDaysSinceAthFromSatoNak() {
     String password = request->getParam("password", true)->value();
     String city = request->getParam("city", true)->value();
     String timezone = request->getParam("timezone", true)->value();
+    String currency = request->getParam("currency", true)->value();  // 🌍 New
+    String theme = request->getParam("theme", true)->value();        // 🎨 New
+    String toptext = request->getParam("toptext", true)->value();    // 📝 New
+    String bottomtext = request->getParam("bottomtext", true)->value(); // 📝 New
+
+    // Validate and limit custom text to 10 characters
+    if (toptext.length() > 10) toptext = toptext.substring(0, 10);
+    if (bottomtext.length() > 10) bottomtext = bottomtext.substring(0, 10);
 
     Serial.println("✅ Saving WiFi Settings:");
     Serial.println("SSID: " + ssid);
     Serial.println("Password: " + password);
     Serial.println("City: " + city);
     Serial.println("Timezone: " + timezone);
+    Serial.println("Currency: " + currency);                        // 🌍 New
+    Serial.println("Theme: " + theme);                              // 🎨 New
+    Serial.println("Custom Top: " + toptext);                       // 📝 New
+    Serial.println("Custom Bottom: " + bottomtext);                 // 📝 New
 
     prefs.begin("stacksworth", false);
     prefs.putString("ssid", ssid);
     prefs.putString("password", password);
     prefs.putString("city", city);
+    prefs.putString("currency", currency);                          // 🌍 Store currency
+    prefs.putString("theme", theme);                                // 🎨 Store theme
+    prefs.putString("toptext", toptext);                            // 📝 Store custom top text
+    prefs.putString("bottomtext", bottomtext);                      // 📝 Store custom bottom text
     prefs.putInt("timezone", timezone.toInt());
     prefs.end();
     Serial.println("✅ Settings saved to NVS!");
@@ -1403,6 +1565,40 @@ bool fetchDaysSinceAthFromSatoNak() {
 
       bootMs = millis();
 
+      // Initialize with last known values or sensible first-boot defaults
+      Serial.println("🔧 Loading cached values or setting first-boot defaults...");
+      
+      // Try to load last known good values from preferences
+      prefs.begin("cache", true);  // read-only mode
+      String lastBtcText = prefs.getString("btcText", "Connecting");
+      String lastBlockText = prefs.getString("blockText", "Syncing");
+      String lastFeeText = prefs.getString("feeText", "Checking");
+      String lastSatsText = prefs.getString("satsText", "Updating");
+      String lastChangeText = prefs.getString("changeText", "Fetching");
+      String lastAthText = prefs.getString("athText", "Refreshing");
+      String lastDaysAthText = prefs.getString("daysAthText", "Updating");
+      String lastHashrateText = prefs.getString("hashrateText", "Checking");
+      String lastCircSupplyText = prefs.getString("circSupplyText", "Counting");
+      String lastMinerName = prefs.getString("minerName", "Discovering");
+      prefs.end();
+      
+      // Apply cached or first-boot values
+      strncpy(btcText, lastBtcText.c_str(), sizeof(btcText));
+      strncpy(blockText, lastBlockText.c_str(), sizeof(blockText));
+      strncpy(feeText, lastFeeText.c_str(), sizeof(feeText));
+      strncpy(satsText, lastSatsText.c_str(), sizeof(satsText));
+      strncpy(satsText2, "Updating", sizeof(satsText2));
+      strncpy(timeText, "Syncing", sizeof(timeText));
+      strncpy(dateText, "...", sizeof(dateText));
+      strncpy(dayText, "Starting", sizeof(dayText));
+      strncpy(hashrateText, lastHashrateText.c_str(), sizeof(hashrateText));
+      strncpy(circSupplyText, lastCircSupplyText.c_str(), sizeof(circSupplyText));
+      strncpy(circPercentText, "/21 Million", sizeof(circPercentText));
+      strncpy(changeText, lastChangeText.c_str(), sizeof(changeText));
+      strncpy(athText, lastAthText.c_str(), sizeof(athText));
+      strncpy(daysAthText, lastDaysAthText.c_str(), sizeof(daysAthText));
+      minerName = lastMinerName;
+      
       // Initial API Fetch
       Serial.println("🌍 Fetching initial data...");
       fetchBitcoinData();
@@ -1419,6 +1615,9 @@ bool fetchDaysSinceAthFromSatoNak() {
       fetchWeather();
       lastFetchTime = millis();
       Serial.println("✅ Initial data fetch complete!");
+      
+      // Save good values for future fallback use
+      saveDisplayCache();
 
       lastWeatherUpdate = millis() - WEATHER_UPDATE_INTERVAL; // ⬅️ force weather update ready immediately
 
@@ -1438,15 +1637,6 @@ bool fetchDaysSinceAthFromSatoNak() {
       lastNTPUpdate = millis() - NTP_UPDATE_INTERVAL;         // Force NTP update soon
 
      pinMode(BUTTON_PIN, INPUT_PULLUP);  //added this for the Smash Buy Button!!!
-
-      // Initialize watchdog timer BEFORE any HTTP calls
-      esp_task_wdt_config_t wdt_config = {
-          .timeout_ms = 12000,                             // 12 seconds
-          .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // All cores
-          .trigger_panic = true                            // Reset if not fed in time
-      };
-      esp_task_wdt_init(&wdt_config);
-      esp_task_wdt_add(NULL); // Add current task to WDT
 
       bootMs = millis();
 
@@ -1550,6 +1740,7 @@ if (WiFi.status() == WL_CONNECTED) {
     esp_task_wdt_reset(); // Feed watchdog before network operations
     fetchBitcoinData();
     lastBTC = now;
+    saveDisplayCache(); // Save after successful price update
     esp_task_wdt_reset(); // Feed watchdog after network operations
   }
   // 2) Fee at +offset
@@ -1570,6 +1761,7 @@ if (WiFi.status() == WL_CONNECTED) {
     fetchDaysSinceAthFromSatoNak();
     fetchChange24hFromSatoNak();
     lastBlock = now;
+    saveDisplayCache(); // Save after successful data updates
     esp_task_wdt_reset(); // Feed watchdog after network operations
   }
   // 4) Weather seldom, with a small offset
@@ -1589,120 +1781,164 @@ if (WiFi.status() == WL_CONNECTED) {
     Serial.println(displayCycle);
 
     switch (displayCycle) {
-      case 0:
+      case 0: {
+        textEffect_t effectIn, effectOut;
+        getThemeEffects(effectIn, effectOut);
         Serial.println("🖥️ Displaying BLOCK screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "BLOCK", blockText); 
-        P.displayZoneText(ZONE_UPPER, "BLOCK",   PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, blockText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_UPPER, "BLOCK",   PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
+        P.displayZoneText(ZONE_LOWER, blockText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
+      }
 
-
-      case 1:
+      case 1: {
+        textEffect_t effectIn, effectOut;
+        getThemeEffects(effectIn, effectOut);
         Serial.println("🖥️ Displaying MINER screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MINER", minerName.c_str());
-        P.displayZoneText(ZONE_UPPER, "MINED BY", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, minerName.c_str(), PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_UPPER, "MINED BY", PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
+        P.displayZoneText(ZONE_LOWER, minerName.c_str(), PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
+      }
 
-      case 2:
+      case 2: {
+        textEffect_t effectIn, effectOut;
+        getThemeEffects(effectIn, effectOut);
         Serial.println("🖥️ Displaying CIRCULATING SUPPLY screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", circSupplyText, circPercentText);
-        P.displayZoneText(ZONE_UPPER, circSupplyText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, circPercentText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_UPPER, circSupplyText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
+        P.displayZoneText(ZONE_LOWER, circPercentText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
+      }
 
-      case 3:
-        Serial.println("🖥️ Displaying USD PRICE screen...");
-        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "USD PRICE", btcText);
-        P.displayZoneText(ZONE_UPPER, "USD PRICE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, btcText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayClear(); //  Force clear
-        P.synchZoneStart(); // Force synchronization
-        break; 
-
-          
-      case 4:
-        Serial.println("🖥️ Displaying 24H CHANGE screen...");
-        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "24H CHANGE", changeText);
-        P.displayZoneText(ZONE_UPPER, "24H CHANGE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, changeText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+      case 3: {
+        textEffect_t effectIn, effectOut;
+        getThemeEffects(effectIn, effectOut);
+        String currentFiat = getCurrentFiatCode();
+        static char priceLabel[48];  // Increased buffer size for safety
+        snprintf(priceLabel, sizeof(priceLabel), "%s PRICE", currentFiat.c_str());
+        Serial.println("🖥️ Displaying " + currentFiat + " PRICE screen...");
+        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", priceLabel, btcText);
+        Serial.printf("🔍 DEBUG: btcText='%s', length=%d\n", btcText, strlen(btcText));
+        P.displayZoneText(ZONE_UPPER, priceLabel, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
+        P.displayZoneText(ZONE_LOWER, btcText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayClear();
         P.synchZoneStart();
         break;
+      } 
 
-      case 5:
+          
+      case 4: {
+        textEffect_t effectIn, effectOut;
+        getThemeEffects(effectIn, effectOut);
+        Serial.println("🖥️ Displaying 24H CHANGE screen...");
+        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "24H CHANGE", changeText);
+        P.displayZoneText(ZONE_UPPER, "24H CHANGE", PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
+        P.displayZoneText(ZONE_LOWER, changeText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
+        P.displayClear();
+        P.synchZoneStart();
+        break;
+      }
+
+      case 5: {
+        textEffect_t effectIn, effectOut;
+        getThemeEffects(effectIn, effectOut);
         Serial.println("🖥️ Displaying ATH PRICE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "ATH", athText);
-        P.displayZoneText(ZONE_UPPER, "ATH", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, athText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_UPPER, "ATH", PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
+        P.displayZoneText(ZONE_LOWER, athText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
+      }
 
-      case 6:
+      case 6: {
+        textEffect_t effectIn, effectOut;
+        getThemeEffects(effectIn, effectOut);
         Serial.println("🖥️ Displaying DAYS SINCE ATH screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", daysAthText, "Since ATH");
-        P.displayZoneText(ZONE_UPPER, daysAthText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, "Since ATH", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_UPPER, daysAthText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
+        P.displayZoneText(ZONE_LOWER, "Since ATH", PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
+      }
 
-      case 7:
-        Serial.println("🖥️ Displaying SATS/$ screen...");
-        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "SATS/USD", satsText);
-        P.displayZoneText(ZONE_UPPER, "SATS/USD", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, satsText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+      case 7: {
+        textEffect_t effectIn, effectOut;
+        getThemeEffects(effectIn, effectOut);
+        String currentFiat = getCurrentFiatCode();
+        static char satsLabel[48];  // Increased buffer size for safety
+        snprintf(satsLabel, sizeof(satsLabel), "SATS/%s", currentFiat.c_str());
+        Serial.println("🖥️ Displaying SATS per " + currentFiat + " screen...");
+        Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", satsLabel, satsText);
+        P.displayZoneText(ZONE_UPPER, satsLabel, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
+        P.displayZoneText(ZONE_LOWER, satsText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization  
         break;
+      }
         
-      case 8:
+      case 8: {
+        textEffect_t effectIn, effectOut;
+        getThemeEffects(effectIn, effectOut);
         Serial.println("🖥️ Displaying FEE RATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "FEE RATE", feeText);
-        P.displayZoneText(ZONE_UPPER, "FEE RATE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, feeText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_UPPER, "FEE RATE", PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
+        P.displayZoneText(ZONE_LOWER, feeText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
+      }
 
-      case 9:
+      case 9: {
+        textEffect_t effectIn, effectOut;
+        getThemeEffects(effectIn, effectOut);
         Serial.println("🖥️ Displaying HASHRATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "HASHRATE", hashrateText);
-        P.displayZoneText(ZONE_UPPER, "HASHRATE", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, hashrateText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_UPPER, "HASHRATE", PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
+        P.displayZoneText(ZONE_LOWER, hashrateText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
+      }
 
         
-      case 10:
+      case 10: {
+        textEffect_t effectIn, effectOut;
+        getThemeEffects(effectIn, effectOut);
         Serial.println("🖥️ Displaying TIME and City screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "TIME", timeText);
-        P.displayZoneText(ZONE_UPPER, savedCity.c_str(), PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, timeText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_UPPER, savedCity.c_str(), PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
+        P.displayZoneText(ZONE_LOWER, timeText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
+      }
 
         
-      case 11:
+      case 11: {
+        textEffect_t effectIn, effectOut;
+        getThemeEffects(effectIn, effectOut);
         Serial.println("🖥️ Displaying DAY/DATE screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", dayText, dateText);
-        P.displayZoneText(ZONE_UPPER, dayText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, dateText, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_UPPER, dayText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
+        P.displayZoneText(ZONE_LOWER, dateText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
+      }
 
         
       case 12: {
+        textEffect_t effectIn, effectOut;
+        getThemeEffects(effectIn, effectOut);
         Serial.println("🖥️ Displaying WEATHER screen...");
         static char tempDisplay[16];
         snprintf(tempDisplay, sizeof(tempDisplay), (temperature >= 0) ? "+%dC" : "%dC", temperature);
@@ -1715,8 +1951,8 @@ if (WiFi.status() == WL_CONNECTED) {
         condDisplay[sizeof(condDisplay) - 1] = '\0';
 
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", tempDisplay, condDisplay);
-        P.displayZoneText(ZONE_UPPER, tempDisplay, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, condDisplay, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_UPPER, tempDisplay, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
+        P.displayZoneText(ZONE_LOWER, condDisplay, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
@@ -1724,22 +1960,33 @@ if (WiFi.status() == WL_CONNECTED) {
 
       
 
-      case 13:
+      case 13: {
+        textEffect_t effectIn, effectOut;
+        getThemeEffects(effectIn, effectOut);
         Serial.println("🖥️ Displaying MOSCOW TIME screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText2);
-        P.displayZoneText(ZONE_UPPER, "MOSCOW TIME", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, satsText2, PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_UPPER, "MOSCOW TIME", PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
+        P.displayZoneText(ZONE_LOWER, satsText2, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization  
         break;
+      }
 
-
-      case 14:// This is for the models we ship but can be changed for custom units
-        P.displayZoneText(ZONE_UPPER, "Satoshi", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
-        P.displayZoneText(ZONE_LOWER, "Nakamoto", PA_CENTER, SCROLL_SPEED, 10000, PA_SCROLL_LEFT, PA_SCROLL_LEFT); 
+      case 14: {// Custom user message or default Satoshi tribute
+        textEffect_t effectIn, effectOut;
+        getThemeEffects(effectIn, effectOut);
+        
+        // Use custom text if provided, otherwise show Satoshi tribute
+        const char* topLine = (savedTopText.length() > 0) ? savedTopText.c_str() : "Satoshi";
+        const char* bottomLine = (savedBottomText.length() > 0) ? savedBottomText.c_str() : "Nakamoto";
+        
+        Serial.printf("🔤 Displaying custom message: %s (Top), %s (Bottom)\n", topLine, bottomLine);
+        P.displayZoneText(ZONE_UPPER, topLine, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut); 
+        P.displayZoneText(ZONE_LOWER, bottomLine, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut); 
         P.displayClear();
         P.synchZoneStart();
         break;
+      }
     }
 
       Serial.println("✅ Screen update complete.");
@@ -1747,3 +1994,4 @@ if (WiFi.status() == WL_CONNECTED) {
       
     }
   }
+
