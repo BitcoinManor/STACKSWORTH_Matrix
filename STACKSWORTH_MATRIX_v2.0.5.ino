@@ -41,6 +41,9 @@ String macID;
 bool wifiConnected = false;
 bool buttonPressed = false;
 
+volatile bool portalActive = false;
+
+// Saved Settings
 String savedSSID;
 String savedPassword;
 String savedCity;
@@ -427,6 +430,11 @@ void loadSavedSettingsAndConnect() {
     // Access Point Code
     void startAccessPoint()
     {
+
+      portalActive = true;
+      Serial.println("🛑 Portal active — freezing display animations");
+      P.displayClear();
+
       Serial.println("🚀 Starting Access Point...");
       WiFi.mode(WIFI_AP);
       macID = getShortMAC();  // Store globally
@@ -1338,6 +1346,7 @@ bool fetchDaysSinceAthFromSatoNak() {
       Serial.printf("📈 Free heap after fetch: %d bytes\n", ESP.getFreeHeap());
     }
 
+
     // Setup of device
 
     void setup()
@@ -1440,8 +1449,13 @@ bool fetchDaysSinceAthFromSatoNak() {
         unsigned long startTime = millis();
         while (millis() - startTime < 21000)
         {
+          esp_task_wdt_reset(); // Feed watchdog during long loop
           showPreConnectionMessage();
-          P.displayAnimate();
+          if (!portalActive) {
+            P.displayAnimate();
+          }
+
+          delay(10); // Small delay to allow other tasks to run
         }
       }
 
@@ -1685,10 +1699,11 @@ P.displayZoneText(1, topLine,    PA_CENTER, 0, 2500, PA_FADE, PA_FADE);
 P.displayZoneText(0, bottomLine, PA_CENTER, 0, 2500, PA_FADE, PA_FADE);
 
 // Let the animation finish while keeping WDT happy (ESP32)
-while (!P.displayAnimate()) {
+while (!portalActive && !P.displayAnimate()) {
   esp_task_wdt_reset();
   delay(10);
 }
+
 
 P.displayClear();
 P.synchZoneStart();
@@ -1776,7 +1791,7 @@ if (WiFi.status() == WL_CONNECTED) {
 
 
       // 🖥️ Rotate screens
-  if (P.displayAnimate()) {
+  if (!portalActive && P.displayAnimate()) {
     Serial.print("🖥️ Displaying screen: ");
     Serial.println(displayCycle);
 
@@ -1994,4 +2009,3 @@ if (WiFi.status() == WL_CONNECTED) {
       
     }
   }
-
