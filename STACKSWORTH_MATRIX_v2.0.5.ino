@@ -28,7 +28,8 @@ Preferences prefs;
 // retrieve and store the MAC
 String getShortMAC() {
   uint8_t mac[6];
-  esp_wifi_get_mac(WIFI_IF_STA, mac);  // Get STA interface MAC
+  //esp_wifi_get_mac(WIFI_IF_STA, mac);  // Get STA interface MAC
+  esp_wifi_get_mac(WIFI_IF_AP, mac);    // Get AP interface MAC
   char shortID[7];
   sprintf(shortID, "%02X%02X%02X", mac[3], mac[4], mac[5]);  // last 3 bytes (6 hex chars)
   return String(shortID);
@@ -430,10 +431,6 @@ void loadSavedSettingsAndConnect() {
     // Access Point Code
     void startAccessPoint()
     {
-
-      portalActive = true;
-      Serial.println("🛑 Portal active — freezing display animations");
-      P.displayClear();
 
       Serial.println("🚀 Starting Access Point...");
       WiFi.mode(WIFI_AP);
@@ -1451,10 +1448,7 @@ bool fetchDaysSinceAthFromSatoNak() {
         {
           esp_task_wdt_reset(); // Feed watchdog during long loop
           showPreConnectionMessage();
-          if (!portalActive) {
-            P.displayAnimate();
-          }
-
+          P.displayAnimate();
           delay(10); // Small delay to allow other tasks to run
         }
       }
@@ -1572,10 +1566,14 @@ bool fetchDaysSinceAthFromSatoNak() {
 
       // Start Web Server
       Serial.println("🌐 Starting Async Web Server...");
-      delay(2000); // 🕒 Let WiFi fully stabilize first
+      //delay(2000); // 🕒 Let WiFi fully stabilize first
       server.begin();
       Serial.println("🌍 Async Web server started");
-      delay(2000); // 🕒 Let server stabilize after starting
+      //delay(2000); // 🕒 Let server stabilize after starting
+
+      portalActive = true;
+      Serial.println("🛑 Captive portal is now active — freezing display");
+      P.displayClear();
 
       bootMs = millis();
 
