@@ -2,6 +2,11 @@
 
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
+
+// 🧪 SAFE MODE: Set to 1 to run PORTAL-ONLY MODE for testing
+// Set to 0 for normal operation with all features
+#define SAFE_PORTAL_MODE 1
+
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
@@ -433,21 +438,46 @@ void loadSavedSettingsAndConnect() {
     {
 
       Serial.println("🚀 Starting Access Point...");
+      
+      // Disconnect from any existing WiFi first
+      WiFi.disconnect(true);
+      delay(100);
+      
       WiFi.mode(WIFI_AP);
+      delay(100);
+      
       macID = getShortMAC();  // Store globally
       String ssid = "SW-MATRIX-" + getShortMAC();
-      WiFi.softAP(ssid.c_str());
-
+      
+      // Configure AP with explicit settings for better stability
+      WiFi.softAPConfig(
+        IPAddress(192, 168, 4, 1),    // AP IP
+        IPAddress(192, 168, 4, 1),    // Gateway
+        IPAddress(255, 255, 255, 0)   // Subnet
+      );
+      
+      // Start AP with channel 1, no hidden SSID, max 4 connections
+      WiFi.softAP(ssid.c_str(), "", 1, 0, 4);
+      
+      // Wait for AP to fully start
+      delay(500);
 
       IPAddress myIP = WiFi.softAPIP();
       Serial.print("🌍 AP IP address: ");
       Serial.println(myIP);
       Serial.print("📶 AP SSID: ");
-      Serial.println(ssid); // Helpful for debug
+      Serial.println(ssid);
 
-      // DNS Captive portal
+      // Start DNS Server for captive portal
       dnsServer.start(53, "*", myIP);
       Serial.println("🚀 DNS Server started for captive portal.");
+      
+      // Give DNS a moment to initialize
+      delay(100);
+      
+      // Set portal as active
+      portalActive = true;
+      Serial.println("✅ Access Point ready for connections");
     }
 
     // FETCH FUNCTIONS
@@ -1381,6 +1411,7 @@ bool fetchDaysSinceAthFromSatoNak() {
       P.displayClear();
       
       Serial.println("✅ LED Matrix safely initialized at brightness 1");
+#endif // SAFE_PORTAL_MODE
       
       // 🐕 Initialize watchdog timer EARLY to prevent crashes during setup
       Serial.println("🐕 Initializing Watchdog Timer...");
@@ -1431,9 +1462,16 @@ bool fetchDaysSinceAthFromSatoNak() {
       // Try WiFi first, fallback if needed
       Serial.println("📡 Loading saved WiFi and settings...");
       loadSavedSettingsAndConnect();
-
+     #if SAFE_PORTAL_MODE
+      if (portalActive) {
+        Serial.println("🧯 SAFE PORTAL MODE — setup halted");
+        return;
+      }
+    #endif
+ 
       randomSeed(esp_random());
 
+#if !SAFE_PORTAL_MODE
       // Show Welcome Loop BEFORE restoring full brightness (if WiFi not connected)
       if (!wifiConnected)
       {
@@ -1459,6 +1497,7 @@ bool fetchDaysSinceAthFromSatoNak() {
       P.setIntensity(ZONE_LOWER, BRIGHTNESS);
       
       Serial.printf("💡 Brightness restored to: %d/15 for all zones\n", BRIGHTNESS);
+#endif // SAFE_PORTAL_MODE
 
       // 🕒 Time Config - only set default if not already configured in loadSavedSettingsAndConnect()
       if (!wifiConnected) {
@@ -1466,8 +1505,12 @@ bool fetchDaysSinceAthFromSatoNak() {
         configTzTime(TIMEZONE_STRINGS[11], ntpServer); // Default to Mountain Time
       }
 
-      // Serve Custom HTML File
-      server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+      // 🌐 Only set up web server routes if portal is active (AP mode)
+      if (portalActive) {
+        Serial.println("🌐 Setting up web server routes for captive portal...");
+        
+        // Serve Custom HTML File
+        server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
                 {
   if (SPIFFS.exists("/STACKS_Wifi_Portal.html.gz")) {
     AsyncWebServerResponse *response = request->beginResponse(SPIFFS, "/STACKS_Wifi_Portal.html.gz", "text/html");
@@ -1489,6 +1532,7 @@ bool fetchDaysSinceAthFromSatoNak() {
     String theme = request->getParam("theme", true)->value();        // 🎨 New
     String toptext = request->getParam("toptext", true)->value();    // 📝 New
     String bottomtext = request->getParam("bottomtext", true)->value(); // 📝 New
+    String device = request->hasParam("device", true) ? request->getParam("device", true)->value() : "Matrix"; // 🎛️ Device selection
 
     // Validate and limit custom text to 10 characters
     if (toptext.length() > 10) toptext = toptext.substring(0, 10);
@@ -1503,6 +1547,7 @@ bool fetchDaysSinceAthFromSatoNak() {
     Serial.println("Theme: " + theme);                              // 🎨 New
     Serial.println("Custom Top: " + toptext);                       // 📝 New
     Serial.println("Custom Bottom: " + bottomtext);                 // 📝 New
+    Serial.println("Device: " + device);                            // 🎛️ Device selection
 
     prefs.begin("stacksworth", false);
     prefs.putString("ssid", ssid);
@@ -1512,6 +1557,7 @@ bool fetchDaysSinceAthFromSatoNak() {
     prefs.putString("theme", theme);                                // 🎨 Store theme
     prefs.putString("toptext", toptext);                            // 📝 Store custom top text
     prefs.putString("bottomtext", bottomtext);                      // 📝 Store custom bottom text
+    prefs.putString("device", device);                              // 🎛️ Store device selection
     prefs.putInt("timezone", timezone.toInt());
     prefs.end();
     Serial.println("✅ Settings saved to NVS!");
@@ -1542,6 +1588,11 @@ bool fetchDaysSinceAthFromSatoNak() {
       request->send(200, "text/plain", getShortMAC());
     });
 
+      // 🔄 Handle reboot endpoint (used by HTML after save)
+      server.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request) {
+      request->send(200, "text/plain", "Rebooting...");
+    });
+
       // Brightness control endpoint
       server.on("/brightness", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (request->hasParam("level")) {
@@ -1564,19 +1615,22 @@ bool fetchDaysSinceAthFromSatoNak() {
                         { request->redirect("/");
                         });
 
-      // Start Web Server
-      Serial.println("🌐 Starting Async Web Server...");
-      //delay(2000); // 🕒 Let WiFi fully stabilize first
-      server.begin();
-      Serial.println("🌍 Async Web server started");
-      //delay(2000); // 🕒 Let server stabilize after starting
-
-      portalActive = true;
-      Serial.println("🛑 Captive portal is now active — freezing display");
-      P.displayClear();
+        // Start Web Server
+        Serial.println("🌐 Starting Async Web Server...");
+        server.begin();
+        Serial.println("✅ Web server started and ready");
+        
+        Serial.println("🛑 Captive portal active — display frozen");
+#if !SAFE_PORTAL_MODE
+        P.displayClear();
+#endif
+      } else {
+        Serial.println("✅ WiFi connected - portal not needed");
+      }
 
       bootMs = millis();
 
+#if !SAFE_PORTAL_MODE
       // Initialize with last known values or sensible first-boot defaults
       Serial.println("🔧 Loading cached values or setting first-boot defaults...");
       
@@ -1654,6 +1708,9 @@ bool fetchDaysSinceAthFromSatoNak() {
 
       // Initial API Fetch
       Serial.println("🌍 Fetching initial data...");
+#endif // SAFE_PORTAL_MODE
+      
+      Serial.println("✅ Setup complete!");
     }
 
     
@@ -1664,6 +1721,14 @@ bool fetchDaysSinceAthFromSatoNak() {
       esp_task_wdt_reset();           // Reset watchdog
       dnsServer.processNextRequest(); // Handle captive portal DNS magic
 
+#if SAFE_PORTAL_MODE
+      // SAFE MODE: Only process DNS and watchdog, nothing else
+      if (portalActive) {
+        delay(10); // Small delay to prevent tight loop
+        return;
+      }
+#else
+      // NORMAL MODE: Full feature set
 
 // 🛠️ Smash Buy Button Polling (Debounced)
 static bool lastButtonState = HIGH;
@@ -2007,3 +2072,5 @@ if (WiFi.status() == WL_CONNECTED) {
       
     }
   }
+#endif // SAFE_PORTAL_MODE
+}
