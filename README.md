@@ -23,7 +23,7 @@ that’s built for Bitcoiners, by Bitcoiners.
 ## 🚀 Quick Start
 
 - **🔌 Flash Instantly:**  
-  [StacksWorth Web Flasher →](https://bitcoinmanor.github.io/BLOKDBIT_WebFlasher/) *(custom URL coming soon)*
+  [StacksWorth Web Flasher →](https://bitcoinmanor.github.io/STACKSWORTH_WebFlasher) *(custom URL coming soon)*
 
 - **📦 Order Units or Kits:**  
   [stacksworth.com](https://stacksworth.com)
