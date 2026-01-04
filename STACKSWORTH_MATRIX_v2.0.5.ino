@@ -1,7 +1,7 @@
 
 
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
-// Built By BitcoinManor.com
+// Built By BitcoinManor.com stacksworth.com
 
 // 🧪 SAFE MODE: Set to 1 to run PORTAL-ONLY MODE for testing
 // Set to 0 for normal operation with all features
