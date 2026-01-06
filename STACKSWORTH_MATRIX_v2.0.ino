@@ -1,6 +1,6 @@
 
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
-// Built By BitcoinManor.com
+// Built By BitcoinManor.com Stacksworth.com
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
