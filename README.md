@@ -73,8 +73,16 @@ Future versions will include:
 - **APIs:**
 - We use our own SatoNak Server and thank the others below that we use for our backups
 - SATONAK API'S
-- - [`Satonak Price`](https://www.satonak.bitcoinmanor.com/api/price)
+  - - - [`Satonak Price`](https://www.satonak.bitcoinmanor.com/api/price)
   - - - [`Satonak Block Height`](https://www.satonak.bitcoinmanor.com/api/height)
+  - - - [`Satonak CAD Price`](https://satonak.bitcoinmanor.com/api/price?fiat=CAD)
+  - - - [`Satonak Fee`](https://satonak.bitcoinmanor.com/api/fee)
+  - - - [`Satonak Hashrate`](https://satonak.bitcoinmanor.com/api/hashrate)
+  - - - [`Satonak Circulating Supply`](https://satonak.bitcoinmanor.com/api/circsupply)
+  - - - [`Satonak Miner`](https://satonak.bitcoinmanor.com/api/miner)
+  - - - [`Satonak 24hr Price Chamge`](https://satonak.bitcoinmanor.com/api/change24h)
+  - - - [`Satonak EUR Price`](https://satonak.bitcoinmanor.com/api/price?fiat=EUR)
+        OTHER BACKUP API's  
 - - [`CoinGecko`](https://www.coingecko.com/en/api)
   - [`Blockchain.info`](https://blockchain.info)
   - [`Mempool.space`](https://mempool.space)
