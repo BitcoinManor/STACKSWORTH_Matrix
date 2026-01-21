@@ -74,9 +74,9 @@ static const char* SATONAK_BASE   = "https://satonak.bitcoinmanor.com";
 static const char* SATONAK_PRICE  = "/api/price";   // supports ?fiat=EUR etc.
 static const char* SATONAK_HEIGHT = "/api/height";  // (for later)
 static const char* SATONAK_MINER  = "/api/miner";   // (for later)
-static const char* SATONAK_MINER  = "/api/24hchange";
-static conat char* SATONAK_MINER  = "/api/fee";
-
+static const char* SATONAK_24HCHANGE  = "/api/24hchange";
+static const char* SATONAK_FEE  = "/api/fee";
+static const char* SATONAK_HASHRATE  = "/api/hashrate";
 
 
 // default fiat (can be "USD", "EUR", etc.) - now loaded from preferences
