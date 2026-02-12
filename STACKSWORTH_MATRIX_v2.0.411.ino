@@ -1,5 +1,6 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
+// v2.0.42
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
@@ -48,6 +49,8 @@ String savedTheme;     // 🎨 New: User's preferred theme (scroll, fade)
 String savedTopText;   // 📝 New: User's custom top row message (max 10 chars)
 String savedBottomText;// 📝 New: User's custom bottom row message (max 10 chars)
 String savedTempUnit;  // 🌡️ New: User's preferred temperature unit (C or F)
+uint8_t savedBrightness = 2; // 💡 New: User's brightness preference (1-15)
+bool displayEnabled[15] = {true, true, true, true, true, true, true, true, true, true, true, true, true, true, true}; // 📊 Display options for each case (0-14)
 int savedTimezone = -99;
 
 
@@ -369,8 +372,15 @@ void loadSavedSettingsAndConnect() {
   savedTopText = prefs.getString("toptext", "");       // 📝 Custom top row message
   savedBottomText = prefs.getString("bottomtext", ""); // 📝 Custom bottom row message
   savedTempUnit = prefs.getString("tempunit", "C");    // 🌡️ Default to Celsius
+  savedBrightness = prefs.getUChar("brightness", 2);  // 💡 Load brightness preference (default 2)
   savedTimezone = prefs.getInt("timezone", -99);
-  BRIGHTNESS = prefs.getUChar("brightness", 2);       // 💡 Load saved brightness, default to 2
+  BRIGHTNESS = savedBrightness;                        // 💡 Apply saved brightness
+  
+  // 📊 Load display options for each case (default all enabled)
+  for (int i = 0; i < 15; i++) {
+    String key = "show" + String(i);
+    displayEnabled[i] = prefs.getUChar(key.c_str(), 1) == 1;  // Default to 1 (enabled)
+  }
 
   prefs.end();
 
@@ -1251,8 +1261,15 @@ bool fetchDaysSinceAthFromSatoNak() {
 
       HTTPClient http;
       String url = "https://nominatim.openstreetmap.org/search?city=" + savedCity + "&format=json";
+      http.setTimeout(2000);      // Prevent hanging
+      http.setConnectTimeout(1500); // Connection timeout
+      http.useHTTP10(true);       // Use HTTP/1.0 for better stability
+      http.setReuse(false);       // Don't reuse connection
       http.begin(url);
+      
+      esp_task_wdt_reset(); // Feed watchdog before HTTP operation
       int httpResponseCode = http.GET();
+      esp_task_wdt_reset(); // Feed watchdog after HTTP operation
 
       if (httpResponseCode == 200)
       {
@@ -1304,8 +1321,15 @@ bool fetchDaysSinceAthFromSatoNak() {
                           "&current=temperature_2m,weather_code&timezone=auto";
 
       HTTPClient http;
+      http.setTimeout(2000);      // Prevent hanging
+      http.setConnectTimeout(1500); // Connection timeout
+      http.useHTTP10(true);       // Use HTTP/1.0 for better stability
+      http.setReuse(false);       // Don't reuse connection
       http.begin(weatherURL);
+      
+      esp_task_wdt_reset(); // Feed watchdog before HTTP operation
       int httpCode = http.GET();
+      esp_task_wdt_reset(); // Feed watchdog after HTTP operation
 
       if (httpCode == 200)
       {
@@ -1494,10 +1518,11 @@ bool fetchDaysSinceAthFromSatoNak() {
     String toptext = request->getParam("toptext", true)->value();    // 📝 New
     String bottomtext = request->getParam("bottomtext", true)->value(); // 📝 New
     String tempunit = request->getParam("tempunit", true)->value();  // 🌡️ New
+    String brightness = request->getParam("brightness", true)->value(); // 💡 New
 
-    // Validate and limit custom text to 10 characters
-    if (toptext.length() > 10) toptext = toptext.substring(0, 10);
-    if (bottomtext.length() > 10) bottomtext = bottomtext.substring(0, 10);
+    // Validate and limit custom text to 11 characters
+    if (toptext.length() > 11) toptext = toptext.substring(0, 11);
+    if (bottomtext.length() > 11) bottomtext = bottomtext.substring(0, 11);
 
     Serial.println("✅ Saving WiFi Settings:");
     Serial.println("SSID: " + ssid);
@@ -1509,6 +1534,7 @@ bool fetchDaysSinceAthFromSatoNak() {
     Serial.println("Custom Top: " + toptext);                       // 📝 New
     Serial.println("Custom Bottom: " + bottomtext);                 // 📝 New
     Serial.println("Temperature Unit: " + tempunit);                // 🌡️ New
+    Serial.println("Brightness: " + brightness);                    // 💡 New
 
     prefs.begin("stacksworth", false);
     prefs.putString("ssid", ssid);
@@ -1519,9 +1545,39 @@ bool fetchDaysSinceAthFromSatoNak() {
     prefs.putString("toptext", toptext);                            // 📝 Store custom top text
     prefs.putString("bottomtext", bottomtext);                      // 📝 Store custom bottom text
     prefs.putString("tempunit", tempunit);                          // 🌡️ Store temperature unit
+    prefs.putUChar("brightness", brightness.toInt());              // 💡 Store brightness
+    
+    // 📊 Store display options (show0-show14)
+    for (int i = 0; i < 15; i++) {
+      String key = "show" + String(i);
+      String value = request->hasParam(key, true) ? request->getParam(key, true)->value() : "0";
+      prefs.putUChar(key.c_str(), value.toInt());
+      Serial.printf("Display %d: %s\n", i, value.c_str());
+    }
+    
     prefs.putInt("timezone", timezone.toInt());
     prefs.end();
     Serial.println("✅ Settings saved to NVS!");
+    
+    // ✅ IMMEDIATELY APPLY CHANGES (don't wait for reboot)
+    savedBrightness = brightness.toInt();
+    savedTempUnit = tempunit;
+    savedCity = city;
+    savedCurrency = currency;
+    savedTopText = toptext;
+    savedBottomText = bottomtext;
+    savedTheme = theme;
+    
+    // 🔄 Reload displayEnabled array from NVS
+    prefs.begin("stacksworth", true);  // Open in read-only mode
+    for (int i = 0; i < 15; i++) {
+      String key = "show" + String(i);
+      displayEnabled[i] = prefs.getUChar(key.c_str(), 1) == 1;
+    }
+    prefs.end();
+    
+    // 💡 Apply brightness immediately
+    setBrightness(savedBrightness);
 
 
     // ✅ SEND HTTP 200 RESPONSE FIRST
@@ -1970,7 +2026,16 @@ if (WiFi.status() == WL_CONNECTED) {
         getThemeEffects(effectIn, effectOut);
         Serial.println("🖥️ Displaying WEATHER screen...");
         static char tempDisplay[16];
-        snprintf(tempDisplay, sizeof(tempDisplay), (temperature >= 0) ? "+%dC" : "%dC", temperature);
+        
+        // 🌡️ Convert temperature based on user's preference
+        int displayTemp = temperature;
+        char tempUnit = 'C';
+        if (savedTempUnit == "F") {
+          displayTemp = (int)((temperature * 9.0 / 5.0) + 32); // Convert C to F
+          tempUnit = 'F';
+        }
+        
+        snprintf(tempDisplay, sizeof(tempDisplay), (displayTemp >= 0) ? "+%d%c" : "%d%c", displayTemp, tempUnit);
         String cond = weatherCondition;
         cond.replace("_", " ");
         cond.toLowerCase();
@@ -2019,7 +2084,11 @@ if (WiFi.status() == WL_CONNECTED) {
     }
 
       Serial.println("✅ Screen update complete.");
-      displayCycle = (displayCycle + 1) % 15;
+      
+      // 📊 Advance to next enabled display cycle, skip disabled ones
+      do {
+        displayCycle = (displayCycle + 1) % 15;
+      } while (!displayEnabled[displayCycle] && displayCycle != 0);  // Skip disabled cases but always allow wrap-around
       
     }
   }
