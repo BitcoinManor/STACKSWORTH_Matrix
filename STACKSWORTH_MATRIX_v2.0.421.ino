@@ -1,6 +1,6 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.42
+// v2.0.421
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
@@ -1509,16 +1509,31 @@ bool fetchDaysSinceAthFromSatoNak() {
       server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request)
                 {
   if (request->hasParam("ssid", true) && request->hasParam("password", true)) {
+    // 🔐 Open prefs first so we can keep existing values if user leaves fields blank
+    prefs.begin("stacksworth", false);
+
     String ssid = request->getParam("ssid", true)->value();
     String password = request->getParam("password", true)->value();
     String city = request->getParam("city", true)->value();
     String timezone = request->getParam("timezone", true)->value();
-    String currency = request->getParam("currency", true)->value();  // 🌍 New
-    String theme = request->getParam("theme", true)->value();        // 🎨 New
-    String toptext = request->getParam("toptext", true)->value();    // 📝 New
-    String bottomtext = request->getParam("bottomtext", true)->value(); // 📝 New
-    String tempunit = request->getParam("tempunit", true)->value();  // 🌡️ New
-    String brightness = request->getParam("brightness", true)->value(); // 💡 New
+    String currency = request->getParam("currency", true)->value();
+    String theme = request->getParam("theme", true)->value();
+    String toptext = request->getParam("toptext", true)->value();
+    String bottomtext = request->getParam("bottomtext", true)->value();
+    String tempunit = request->getParam("tempunit", true)->value();
+    String brightness = request->getParam("brightness", true)->value();
+
+    // ✅ If user left SSID/PW blank, keep existing saved values
+    // This prevents accidental Wi-Fi wipe when reopening Matrix.local to change other settings.
+    ssid.trim();
+    password.trim();
+
+    if (ssid.length() == 0) {
+      ssid = prefs.getString("ssid", "");
+    }
+    if (password.length() == 0) {
+      password = prefs.getString("password", "");
+    }
 
     // Validate and limit custom text to 11 characters
     if (toptext.length() > 11) toptext = toptext.substring(0, 11);
@@ -1526,17 +1541,15 @@ bool fetchDaysSinceAthFromSatoNak() {
 
     Serial.println("✅ Saving WiFi Settings:");
     Serial.println("SSID: " + ssid);
-    Serial.println("Password: " + password);
+    Serial.println("Password: (hidden)");
     Serial.println("City: " + city);
     Serial.println("Timezone: " + timezone);
-    Serial.println("Currency: " + currency);                        // 🌍 New
-    Serial.println("Theme: " + theme);                              // 🎨 New
-    Serial.println("Custom Top: " + toptext);                       // 📝 New
-    Serial.println("Custom Bottom: " + bottomtext);                 // 📝 New
-    Serial.println("Temperature Unit: " + tempunit);                // 🌡️ New
-    Serial.println("Brightness: " + brightness);                    // 💡 New
-
-    prefs.begin("stacksworth", false);
+    Serial.println("Currency: " + currency);
+    Serial.println("Theme: " + theme);
+    Serial.println("Custom Top: " + toptext);
+    Serial.println("Custom Bottom: " + bottomtext);
+    Serial.println("Temperature Unit: " + tempunit);
+    Serial.println("Brightness: " + brightness);
     prefs.putString("ssid", ssid);
     prefs.putString("password", password);
     prefs.putString("city", city);
@@ -1737,6 +1750,30 @@ bool fetchDaysSinceAthFromSatoNak() {
       esp_task_wdt_reset();           // Reset watchdog
       dnsServer.processNextRequest(); // Handle captive portal DNS magic
 
+      // 🌐 WiFi RECONNECTION MONITOR (check every 10 seconds)
+      static unsigned long lastWiFiCheck = 0;
+      unsigned long now = millis();
+      if (now - lastWiFiCheck >= 10000) {
+        lastWiFiCheck = now;
+        
+        if (WiFi.status() != WL_CONNECTED) {
+          Serial.println("⚠️ WiFi disconnected! Attempting to reconnect...");
+          WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
+          
+          // Wait up to 10 seconds for reconnection
+          unsigned long reconnectStart = millis();
+          while (WiFi.status() != WL_CONNECTED && millis() - reconnectStart < 10000) {
+            esp_task_wdt_reset(); // Keep feeding watchdog during reconnection
+            delay(500);
+          }
+          
+          if (WiFi.status() == WL_CONNECTED) {
+            Serial.println("✅ WiFi reconnected!");
+          } else {
+            Serial.println("❌ WiFi reconnection failed. Will retry in 10 seconds.");
+          }
+        }
+      }
 
 // 🛠️ Smash Buy Button Polling (Debounced)
 static bool lastButtonState = HIGH;
