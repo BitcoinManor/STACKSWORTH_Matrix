@@ -1,6 +1,6 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.421
+//v2.0.421
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
@@ -387,7 +387,7 @@ void loadSavedSettingsAndConnect() {
   if (savedSSID != "" && savedPassword != "") {
     Serial.println("✅ Found Saved WiFi Credentials:");
     Serial.println("SSID: " + savedSSID);
-    Serial.println("Password: " + savedPassword);
+    Serial.println("Password: (hidden)");
     Serial.println("City: " + savedCity);
     Serial.println("Currency: " + savedCurrency);        // 🌍 New
     Serial.println("Theme: " + savedTheme);              // 🎨 New
