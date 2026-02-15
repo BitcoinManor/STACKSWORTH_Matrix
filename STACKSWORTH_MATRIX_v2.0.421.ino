@@ -1,6 +1,6 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-//v2.0.421
+// v2.0.422
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
@@ -77,6 +77,28 @@ static const char* SATONAK_BASE   = "https://satonak.bitcoinmanor.com";
 static const char* SATONAK_PRICE  = "/api/price";   // supports ?fiat=EUR etc.
 static const char* SATONAK_HEIGHT = "/api/height";  // (for later)
 static const char* SATONAK_MINER  = "/api/miner";   // (for later)
+
+// Staggered fetch intervals (ms)
+const unsigned long INTERVAL_BLOCK_HEIGHT = 5UL * 60UL * 1000UL; // 5 min
+const unsigned long INTERVAL_MINER       = 6UL * 60UL * 1000UL; // 6 min
+const unsigned long INTERVAL_PRICE       = 7UL * 60UL * 1000UL; // 7 min
+const unsigned long INTERVAL_CHANGE24H   = 8UL * 60UL * 1000UL; // 8 min
+const unsigned long INTERVAL_FEE         = 9UL * 60UL * 1000UL; // 9 min
+const unsigned long INTERVAL_HASHRATE    = 10UL * 60UL * 1000UL; // 10 min
+const unsigned long INTERVAL_CIRC_SUPPLY = 11UL * 60UL * 1000UL; // 11 min
+const unsigned long INTERVAL_ATH         = 12UL * 60UL * 1000UL; // 12 min
+const unsigned long INTERVAL_DAYS_ATH    = 13UL * 60UL * 1000UL; // 13 min
+
+// Last fetch timestamps
+unsigned long lastBlockHeightFetch   = 0;
+unsigned long lastMinerFetch        = 0;
+unsigned long lastPriceFetch        = 0;
+unsigned long lastFeeFetch          = 0;
+unsigned long lastHashrateFetch     = 0;
+unsigned long lastCircSupplyFetch   = 0;
+unsigned long lastAthFetch          = 0;
+unsigned long lastDaysAthFetch      = 0;
+unsigned long lastChange24hFetch    = 0;
 
 // default fiat (can be "USD", "EUR", etc.) - now loaded from preferences
 static String getCurrentFiatCode() {
@@ -1596,15 +1618,16 @@ bool fetchDaysSinceAthFromSatoNak() {
     // ✅ SEND HTTP 200 RESPONSE FIRST
     request->send(200, "text/plain", "Settings saved! Rebooting...");
 
-    delay(2000); // small delay to let browser receive the message
-        // Matrix Feedback
-    P.displayZoneText(ZONE_UPPER, "SETTINGS", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    P.displayZoneText(ZONE_LOWER, "SAVED", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    delay(2500);
+    delay(2000); // Let browser receive the message
 
-    P.displayZoneText(ZONE_UPPER, "REBOOTING", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    P.displayZoneText(ZONE_LOWER, "...", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-    delay(2000);
+    // Matrix Feedback - show longer for user clarity
+    P.displayZoneText(ZONE_UPPER, "SETTINGS", PA_CENTER, 0, 3500, PA_FADE, PA_FADE);
+    P.displayZoneText(ZONE_LOWER, "SAVED", PA_CENTER, 0, 3500, PA_FADE, PA_FADE);
+    delay(4000);
+
+    P.displayZoneText(ZONE_UPPER, "REBOOTING", PA_CENTER, 0, 3500, PA_FADE, PA_FADE);
+    P.displayZoneText(ZONE_LOWER, "...", PA_CENTER, 0, 3500, PA_FADE, PA_FADE);
+    delay(3500);
 
     ESP.restart();
   } else {
@@ -1693,40 +1716,43 @@ bool fetchDaysSinceAthFromSatoNak() {
       minerName = lastMinerName;
       
     
-      // Initial API Fetch (WDT-safe)
-      Serial.println("🌍 Fetching initial data (WDT-safe)...");
+      // Initial API Fetch (staggered, WDT-safe)
+      Serial.println("🌍 Fetching initial data (staggered, WDT-safe)...");
 
-      // Feed WDT between each call so setup never trips the watchdog
-      esp_task_wdt_reset(); fetchBitcoinData();
-      esp_task_wdt_reset(); fetchBlockHeight();
-      esp_task_wdt_reset(); fetchMinerFromSatoNak();
-      esp_task_wdt_reset(); fetchHashrateFromSatoNak();
-      esp_task_wdt_reset(); fetchCircSupplyFromSatoNak();
-      esp_task_wdt_reset(); fetchAthFromSatoNak();
-      esp_task_wdt_reset(); fetchDaysSinceAthFromSatoNak();
-      esp_task_wdt_reset(); fetchChange24hFromSatoNak();
-      esp_task_wdt_reset(); fetchFeeRate();
+      unsigned long now = millis();
+      esp_task_wdt_reset(); fetchBlockHeight(); lastBlockHeightFetch = now;
+      delay(1000);
+      esp_task_wdt_reset(); fetchMinerFromSatoNak(); lastMinerFetch = now;
+      delay(1000);
+      esp_task_wdt_reset(); fetchBitcoinData(); lastPriceFetch = now;
+      delay(1000);
+      esp_task_wdt_reset(); fetchChange24hFromSatoNak(); lastChange24hFetch = now;
+      delay(1000);
+      esp_task_wdt_reset(); fetchFeeRate(); lastFeeFetch = now;
+      delay(1000);
+      esp_task_wdt_reset(); fetchHashrateFromSatoNak(); lastHashrateFetch = now;
+      delay(1000);
+      esp_task_wdt_reset(); fetchCircSupplyFromSatoNak(); lastCircSupplyFetch = now;
+      delay(1000);
+      esp_task_wdt_reset(); fetchAthFromSatoNak(); lastAthFetch = now;
+      delay(1000);
+      esp_task_wdt_reset(); fetchDaysSinceAthFromSatoNak(); lastDaysAthFetch = now;
+      delay(1000);
       esp_task_wdt_reset(); fetchTime();
       esp_task_wdt_reset(); fetchLatLonFromCity();
       esp_task_wdt_reset(); fetchWeather();
 
-
       lastFetchTime = millis();
       Serial.println("✅ Initial data fetch complete!");
-      
       // Save good values for future fallback use
       saveDisplayCache();
-
       lastWeatherUpdate = millis() - WEATHER_UPDATE_INTERVAL; // ⬅️ force weather update ready immediately
-
-      
 
       // Show Connection Success Message
       Serial.println("📢 Displaying WiFi connected message on Matrix...");
       P.displayZoneText(ZONE_UPPER, "WIFI", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
       P.displayZoneText(ZONE_LOWER, "CONNECTED", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
       delay(2000);
-      
 
       // 👇  Manually trigger first animation cycle!
       cycle = 0;                                              // Start at first data set
@@ -1734,11 +1760,9 @@ bool fetchDaysSinceAthFromSatoNak() {
       lastWeatherUpdate = millis() - WEATHER_UPDATE_INTERVAL; // Force weather update soon
       lastNTPUpdate = millis() - NTP_UPDATE_INTERVAL;         // Force NTP update soon
 
-     pinMode(BUTTON_PIN, INPUT_PULLUP);  //added this for the Smash Buy Button!!!
+      pinMode(BUTTON_PIN, INPUT_PULLUP);  //added this for the Smash Buy Button!!!
 
       bootMs = millis();
-
-      // Initial API Fetch
       Serial.println("🌍 Fetching initial data...");
     }
 
