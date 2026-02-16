@@ -40,6 +40,11 @@ String macID;
 
 bool wifiConnected = false;
 bool buttonPressed = false;
+volatile bool pendingReboot = false;
+bool rebootPhaseShown = false;
+unsigned long rebootAt = 0;
+bool apMode = false;
+bool apMsgShown = false;
 
 String savedSSID;
 String savedPassword;
@@ -468,6 +473,9 @@ void loadSavedSettingsAndConnect() {
       String ssid = "SW-MATRIX-" + getShortMAC();
       WiFi.softAP(ssid.c_str());
 
+      apMode = true;
+      apMsgShown = false;
+
 
       IPAddress myIP = WiFi.softAPIP();
       Serial.print("🌍 AP IP address: ");
@@ -772,10 +780,28 @@ bool fetchHeightFromSatoNak() {
         Serial.println("❌ Not enough heap to safely fetch. Skipping block height fetch.");
         return;
       }
+      if (WiFi.status() != WL_CONNECTED)
+      {
+        Serial.println("🌐 WiFi not connected; skipping blockchain.info fallback");
+        return;
+      }
       Serial.println("🔄 Fetching Block Height from blockchain.info...");
       HTTPClient http;
-      http.begin(BLOCK_API);
-      if (http.GET() == 200)
+      http.setTimeout(2000);
+      http.setConnectTimeout(1500);
+      http.useHTTP10(true);
+      http.setReuse(false);
+      if (!http.begin(BLOCK_API))
+      {
+        Serial.println("❌ http.begin failed (blockchain.info height)");
+        http.end();
+        return;
+      }
+
+      esp_task_wdt_reset();
+      int rc = http.GET();
+      esp_task_wdt_reset();
+      if (rc == 200)
       {
         blockHeight = http.getString().toInt();
         sprintf(blockText, "%d", blockHeight);
@@ -784,7 +810,7 @@ bool fetchHeightFromSatoNak() {
       }
       else
       {
-        Serial.println("❌ Failed to fetch Block Height");
+        Serial.printf("❌ Failed to fetch Block Height (rc=%d)\n", rc);
       }
       http.end();
       Serial.printf("📈 Free heap after fetch: %d bytes\n", ESP.getFreeHeap());
@@ -1393,6 +1419,19 @@ bool fetchDaysSinceAthFromSatoNak() {
       Serial.printf("📈 Free heap after fetch: %d bytes\n", ESP.getFreeHeap());
     }
 
+    void armRebootMessage(unsigned long msFromNow = 2500)
+    {
+      // Show initial confirmation with scrolling for visibility
+      P.displayZoneText(ZONE_UPPER, "SETTINGS", PA_CENTER, 50, 1500, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+      P.displayZoneText(ZONE_LOWER, "SAVED!", PA_CENTER, 50, 1500, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+      P.displayReset(ZONE_UPPER);
+      P.displayReset(ZONE_LOWER);
+      Serial.println("💾 Settings saved, preparing to reboot...");
+      pendingReboot = true;
+      rebootPhaseShown = false;
+      rebootAt = millis() + msFromNow;
+    }
+
     // Setup of device
 
     void setup()
@@ -1491,16 +1530,34 @@ bool fetchDaysSinceAthFromSatoNak() {
         P.setIntensity(ZONE_UPPER, 3);  // Medium-low brightness for setup
         P.setIntensity(ZONE_LOWER, 3);
         
-        // Show Welcome Loop only if WiFi NOT connected
-        unsigned long startTime = millis();
-        while (millis() - startTime < 21000)
+        // Play welcome message once with scroll effect
+        Serial.println("📢 Displaying welcome message...");
+        P.displayZoneText(ZONE_UPPER, "STACKSWORTH", PA_CENTER, 50, 0, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayZoneText(ZONE_LOWER, "BITCOIN MATRIX", PA_CENTER, 50, 0, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        P.displayReset(ZONE_UPPER);
+        P.displayReset(ZONE_LOWER);
+        
+        // Animate until message completes
+        unsigned long msgStart = millis();
+        while (!P.displayAnimate() && millis() - msgStart < 8000)
         {
-          // Feed watchdog during welcome loop
           esp_task_wdt_reset();
-          showPreConnectionMessage();
-          P.displayAnimate();
-          delay(10); // Delay between messages
+          delay(10);
         }
+        
+        delay(500); // Brief pause
+        
+        // After welcome, show IP address and portal status
+        Serial.println("📡 Portal ready, waiting for connection...");
+        IPAddress apIP = WiFi.softAPIP();
+        String ipDisplay = apIP.toString();
+        P.displayZoneText(ZONE_UPPER, ipDisplay.c_str(), PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
+        P.displayZoneText(ZONE_LOWER, "PORTAL OPEN", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
+        P.displayReset(ZONE_UPPER);
+        P.displayReset(ZONE_LOWER);
+        P.displayAnimate(); // Display immediately
+        apMsgShown = true;
+        Serial.println("✅ Portal screen displayed");
       }
 
       // Now restore user's preferred brightness after welcome screens
@@ -1618,18 +1675,8 @@ bool fetchDaysSinceAthFromSatoNak() {
     // ✅ SEND HTTP 200 RESPONSE FIRST
     request->send(200, "text/plain", "Settings saved! Rebooting...");
 
-    delay(2000); // Let browser receive the message
-
-    // Matrix Feedback - show longer for user clarity
-    P.displayZoneText(ZONE_UPPER, "SETTINGS", PA_CENTER, 0, 3500, PA_FADE, PA_FADE);
-    P.displayZoneText(ZONE_LOWER, "SAVED", PA_CENTER, 0, 3500, PA_FADE, PA_FADE);
-    delay(4000);
-
-    P.displayZoneText(ZONE_UPPER, "REBOOTING", PA_CENTER, 0, 3500, PA_FADE, PA_FADE);
-    P.displayZoneText(ZONE_LOWER, "...", PA_CENTER, 0, 3500, PA_FADE, PA_FADE);
-    delay(3500);
-
-    ESP.restart();
+    // Arm reboot message and let loop() animate until restart
+    armRebootMessage(2500);
   } else {
     Serial.println("❌ Missing parameters in form submission!");
     request->send(400, "text/plain", "Missing parameters");
@@ -1773,6 +1820,45 @@ bool fetchDaysSinceAthFromSatoNak() {
     {
       esp_task_wdt_reset();           // Reset watchdog
       dnsServer.processNextRequest(); // Handle captive portal DNS magic
+
+      // If in AP portal mode, keep showing PORTAL READY
+      if (apMode && WiFi.status() != WL_CONNECTED)
+      {
+        esp_task_wdt_reset();
+        P.displayAnimate();
+        delay(10);
+        return;
+      }
+      else if (apMode && WiFi.status() == WL_CONNECTED)
+      {
+        apMode = false; // Exit portal mode once STA connects
+      }
+
+      // Handle pending reboot messaging without blocking the async server
+      if (pendingReboot)
+      {
+        esp_task_wdt_reset();
+        P.displayAnimate();
+
+        // Swap to REBOOTING phase shortly before restart
+        if (!rebootPhaseShown && (long)(millis() - (rebootAt - 1200)) >= 0)
+        {
+          P.displayZoneText(ZONE_UPPER, "REBOOTING", PA_CENTER, 50, 1000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+          P.displayZoneText(ZONE_LOWER, "NOW...", PA_CENTER, 50, 1000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+          P.displayReset(ZONE_UPPER);
+          P.displayReset(ZONE_LOWER);
+          Serial.println("🔄 Rebooting device...");
+          rebootPhaseShown = true;
+        }
+
+        if ((long)(millis() - rebootAt) >= 0)
+        {
+          P.displayAnimate();
+          delay(150);
+          ESP.restart();
+        }
+        return;
+      }
 
       // 🌐 WiFi RECONNECTION MONITOR (check every 10 seconds)
       static unsigned long lastWiFiCheck = 0;
