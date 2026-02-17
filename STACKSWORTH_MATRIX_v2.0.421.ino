@@ -1,6 +1,6 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.422
+// v2.0.45
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
@@ -67,6 +67,12 @@ uint8_t displayCycle = 0; // 👈 for rotating which screen we show
 AsyncWebServer server(80);
 
 static WiFiClient httpClient;
+
+// 🐕 WDT Helper: Feed watchdog and yield to WiFi/RTOS
+static inline void feedWDT() {
+  esp_task_wdt_reset();
+  delay(1);  // yield to WiFi/RTOS tasks
+}
 
 // 🌍 API Endpoints
 const char* BTC_API = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true";;
@@ -442,6 +448,7 @@ void loadSavedSettingsAndConnect() {
       Serial.print("🌍 IP Address: ");
       Serial.println(WiFi.localIP());
       wifiConnected = true; // 👉 set this!!
+      WiFi.setAutoReconnect(true); // Enable auto-reconnect for normal operation
       
       // 🌍 Configure timezone using proper timezone strings (auto-handles DST!)
       if (savedTimezone != -99 && savedTimezone >= 0 && savedTimezone < NUM_TIMEZONES) {
@@ -455,10 +462,12 @@ void loadSavedSettingsAndConnect() {
       }
     } else {
       Serial.println("\n❌ Failed to connect to WiFi, falling back to Access Point...");
+      WiFi.persistent(false); // Don't save WiFi config to flash
       startAccessPoint();
     }
   } else {
     Serial.println("⚠️ No saved WiFi credentials found, starting Access Point...");
+    WiFi.persistent(false); // Don't save WiFi config to flash
     startAccessPoint();
   }
 }
@@ -468,7 +477,12 @@ void loadSavedSettingsAndConnect() {
     void startAccessPoint()
     {
       Serial.println("🚀 Starting Access Point...");
-      WiFi.mode(WIFI_AP);
+      WiFi.mode(WIFI_OFF); // Completely turn off WiFi first
+      delay(100);
+      WiFi.disconnect(true); // Disconnect and disable auto-reconnect
+      WiFi.setAutoReconnect(false); // Explicitly disable auto-reconnect
+      delay(100); // Give it a moment to fully disconnect
+      WiFi.mode(WIFI_AP); // Now set to AP-only mode
       macID = getShortMAC();  // Store globally
       String ssid = "SW-MATRIX-" + getShortMAC();
       WiFi.softAP(ssid.c_str());
@@ -558,20 +572,27 @@ bool fetchPriceFromSatoNak() {
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
-  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
-  http.setConnectTimeout(1500); // Reduced from 2500ms 
+  http.setTimeout(2000);      // Reduced to 2s to stay well under 12s WDT
+  http.setConnectTimeout(1500);
   http.useHTTP10(true);
   http.setReuse(false);
 
+  feedWDT();
   if (!http.begin(full)) {
     Serial.println("❌ http.begin failed (SatoNak)");
     http.end(); // ⚠️ CRITICAL: Always call end() even on begin() failure to free resources
     return false;
   }
 
-  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
+  feedWDT();
+  // Double-check WiFi right before blocking GET call
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("⚠️ WiFi dropped before GET - aborting");
+    http.end();
+    return false;
+  }
   int rc = http.GET();
-  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
+  feedWDT();
   if (rc != 200) {
     Serial.printf("❌ SatoNak price GET failed (%d)\n", rc);
     http.end();
@@ -579,6 +600,7 @@ bool fetchPriceFromSatoNak() {
   }
 
   String payload = http.getString();
+  feedWDT();
   http.end();
 
   // Check if payload is plain text (just a number) vs JSON
@@ -675,20 +697,27 @@ bool fetchMinerFromSatoNak() {
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
-  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
-  http.setConnectTimeout(1500); // Reduced from 2500ms 
+  http.setTimeout(2000);
+  http.setConnectTimeout(1500); 
   http.useHTTP10(true);
   http.setReuse(false);
 
+  feedWDT();
   if (!http.begin(full)) {
     Serial.println("❌ http.begin failed (SatoNak miner)");
     http.end(); // ⚠️ CRITICAL: Always call end() even on begin() failure to free resources
     return false;
   }
 
-  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
+  feedWDT();
+  // Double-check WiFi right before blocking GET call
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(" WiFi dropped before GET - aborting");
+    http.end();
+    return false;
+  }
   int rc = http.GET();
-  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
+  feedWDT();
   if (rc != 200) {
     Serial.printf("❌ SatoNak miner GET failed (%d)\n", rc);
     http.end();
@@ -696,6 +725,7 @@ bool fetchMinerFromSatoNak() {
   }
 
   String payload = http.getString();
+  feedWDT();
   http.end();
 
   // For simple text response, just use the payload directly
@@ -726,20 +756,27 @@ bool fetchHeightFromSatoNak() {
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
-  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
-  http.setConnectTimeout(1500); // Reduced from 2500ms 
+  http.setTimeout(2000);
+  http.setConnectTimeout(1500);
   http.useHTTP10(true);
   http.setReuse(false);
 
+  feedWDT();
   if (!http.begin(full)) {
     Serial.println("❌ http.begin failed (SatoNak height)");
     http.end(); // ⚠️ CRITICAL: Always call end() even on begin() failure to free resources
     return false;
   }
 
-  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
+  feedWDT();
+  // Double-check WiFi right before blocking GET call
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(" WiFi dropped before GET - aborting");
+    http.end();
+    return false;
+  }
   int rc = http.GET();
-  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
+  feedWDT();
   if (rc != 200) {
     Serial.printf("❌ SatoNak height GET failed (%d)\n", rc);
     http.end();
@@ -747,6 +784,7 @@ bool fetchHeightFromSatoNak() {
   }
 
   String payload = http.getString();
+  feedWDT();
   http.end();
 
   // For simple text response, parse as integer
@@ -767,53 +805,13 @@ bool fetchHeightFromSatoNak() {
 
     void fetchBlockHeight()
     {
-      // Try SatoNak first, then fallback to blockchain.info
+      // Try SatoNak only - no fallback to prevent WDT crashes
+      // If it fails, continue with cached data
       if (fetchHeightFromSatoNak()) {
         Serial.println("✅ Block height fetched from SatoNak");
-        return;
+      } else {
+        Serial.println("⚠️ SatoNak height fetch failed - continuing with cached data");
       }
-      
-      Serial.println("⚠️ SatoNak failed, trying blockchain.info fallback");
-      
-      if (ESP.getFreeHeap() < 160000)
-      {
-        Serial.println("❌ Not enough heap to safely fetch. Skipping block height fetch.");
-        return;
-      }
-      if (WiFi.status() != WL_CONNECTED)
-      {
-        Serial.println("🌐 WiFi not connected; skipping blockchain.info fallback");
-        return;
-      }
-      Serial.println("🔄 Fetching Block Height from blockchain.info...");
-      HTTPClient http;
-      http.setTimeout(2000);
-      http.setConnectTimeout(1500);
-      http.useHTTP10(true);
-      http.setReuse(false);
-      if (!http.begin(BLOCK_API))
-      {
-        Serial.println("❌ http.begin failed (blockchain.info height)");
-        http.end();
-        return;
-      }
-
-      esp_task_wdt_reset();
-      int rc = http.GET();
-      esp_task_wdt_reset();
-      if (rc == 200)
-      {
-        blockHeight = http.getString().toInt();
-        sprintf(blockText, "%d", blockHeight);
-        Serial.printf("✅ Updated Block Height: %d\n", blockHeight);
-        Serial.printf("✅ Block Height: %s\n", blockText);
-      }
-      else
-      {
-        Serial.printf("❌ Failed to fetch Block Height (rc=%d)\n", rc);
-      }
-      http.end();
-      Serial.printf("📈 Free heap after fetch: %d bytes\n", ESP.getFreeHeap());
     }
 
 // Fetch fee rate from SatoNak API
@@ -831,8 +829,8 @@ bool fetchFeeFromSatoNak() {
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
-  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
-  http.setConnectTimeout(1500); // Reduced from 2500ms 
+  http.setTimeout(2000);
+  http.setConnectTimeout(1500); 
   http.useHTTP10(true);
   http.setReuse(false);
 
@@ -842,9 +840,15 @@ bool fetchFeeFromSatoNak() {
     return false;
   }
 
-  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
+  feedWDT();
+  // Double-check WiFi right before blocking GET call
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(" WiFi dropped before GET - aborting");
+    http.end();
+    return false;
+  }
   int rc = http.GET();
-  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
+  feedWDT();
   if (rc != 200) {
     Serial.printf("❌ SatoNak fee GET failed (%d)\n", rc);
     http.end();
@@ -852,6 +856,7 @@ bool fetchFeeFromSatoNak() {
   }
 
   String payload = http.getString();
+  feedWDT();
   http.end();
 
   // Check if payload is plain text (just a number) vs JSON
@@ -927,9 +932,15 @@ void fetchFeeRate() {
     return;
   }
 
-  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
+  feedWDT();
+  // Double-check WiFi right before blocking GET call
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(" WiFi dropped before GET - aborting");
+    http.end();
+    return;
+  }
   int rc = http.GET();
-  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
+  feedWDT();
   if (rc == 200) {
     String payload = http.getString();
     DynamicJsonDocument doc(512);
@@ -965,8 +976,8 @@ bool fetchHashrateFromSatoNak() {
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
-  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
-  http.setConnectTimeout(1500); // Reduced from 2500ms 
+  http.setTimeout(2000);
+  http.setConnectTimeout(1500); 
   http.useHTTP10(true);
   http.setReuse(false);
 
@@ -976,9 +987,15 @@ bool fetchHashrateFromSatoNak() {
     return false;
   }
 
-  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
+  feedWDT();
+  // Double-check WiFi right before blocking GET call
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(" WiFi dropped before GET - aborting");
+    http.end();
+    return false;
+  }
   int rc = http.GET();
-  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
+  feedWDT();
   if (rc != 200) {
     Serial.printf("❌ SatoNak hashrate GET failed (%d)\n", rc);
     http.end();
@@ -986,6 +1003,7 @@ bool fetchHashrateFromSatoNak() {
   }
 
   String payload = http.getString();
+  feedWDT();
   http.end();
 
   // Parse and format the hashrate number
@@ -1019,8 +1037,8 @@ bool fetchCircSupplyFromSatoNak() {
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
-  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
-  http.setConnectTimeout(1500); // Reduced from 2500ms 
+  http.setTimeout(2000);
+  http.setConnectTimeout(1500); 
   http.useHTTP10(true);
   http.setReuse(false);
 
@@ -1030,9 +1048,15 @@ bool fetchCircSupplyFromSatoNak() {
     return false;
   }
 
-  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
+  feedWDT();
+  // Double-check WiFi right before blocking GET call
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(" WiFi dropped before GET - aborting");
+    http.end();
+    return false;
+  }
   int rc = http.GET();
-  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
+  feedWDT();
   if (rc != 200) {
     Serial.printf("❌ SatoNak circulating supply GET failed (%d)\n", rc);
     http.end();
@@ -1040,6 +1064,7 @@ bool fetchCircSupplyFromSatoNak() {
   }
 
   String payload = http.getString();
+  feedWDT();
   http.end();
 
   // For simple text response, parse as number
@@ -1095,8 +1120,8 @@ bool fetchAthFromSatoNak() {
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
-  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
-  http.setConnectTimeout(1500); // Reduced from 2500ms 
+  http.setTimeout(2000);
+  http.setConnectTimeout(1500); 
   http.useHTTP10(true);
   http.setReuse(false);
 
@@ -1106,9 +1131,15 @@ bool fetchAthFromSatoNak() {
     return false;
   }
 
-  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
+  feedWDT();
+  // Double-check WiFi right before blocking GET call
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(" WiFi dropped before GET - aborting");
+    http.end();
+    return false;
+  }
   int rc = http.GET();
-  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
+  feedWDT();
   if (rc != 200) {
     Serial.printf("❌ SatoNak ATH GET failed (%d)\n", rc);
     http.end();
@@ -1116,6 +1147,7 @@ bool fetchAthFromSatoNak() {
   }
 
   String payload = http.getString();
+  feedWDT();
   http.end();
 
   // Parse ATH price - API returns plain text like "73750.07"
@@ -1155,8 +1187,8 @@ bool fetchChange24hFromSatoNak() {
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
-  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
-  http.setConnectTimeout(1500); // Reduced from 2500ms 
+  http.setTimeout(2000);
+  http.setConnectTimeout(1500); 
   http.useHTTP10(true);
   http.setReuse(false);
 
@@ -1166,9 +1198,15 @@ bool fetchChange24hFromSatoNak() {
     return false;
   }
 
-  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
+  feedWDT();
+  // Double-check WiFi right before blocking GET call
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(" WiFi dropped before GET - aborting");
+    http.end();
+    return false;
+  }
   int rc = http.GET();
-  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
+  feedWDT();
   if (rc != 200) {
     Serial.printf("❌ SatoNak 24H change GET failed (%d)\n", rc);
     http.end();
@@ -1176,6 +1214,7 @@ bool fetchChange24hFromSatoNak() {
   }
 
   String payload = http.getString();
+  feedWDT();
   http.end();
 
   // Parse 24H change - API returns plain text like "+1.29%" or "-2.45%"
@@ -1216,8 +1255,8 @@ bool fetchDaysSinceAthFromSatoNak() {
   Serial.print("🌐 GET "); Serial.println(full);
 
   HTTPClient http;
-  http.setTimeout(2000);      // Reduced from 4000ms to prevent WDT crashes
-  http.setConnectTimeout(1500); // Reduced from 2500ms 
+  http.setTimeout(2000);
+  http.setConnectTimeout(1500); 
   http.useHTTP10(true);
   http.setReuse(false);
 
@@ -1227,9 +1266,15 @@ bool fetchDaysSinceAthFromSatoNak() {
     return false;
   }
 
-  esp_task_wdt_reset(); // Feed watchdog before long HTTP operation
+  feedWDT();
+  // Double-check WiFi right before blocking GET call
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(" WiFi dropped before GET - aborting");
+    http.end();
+    return false;
+  }
   int rc = http.GET();
-  esp_task_wdt_reset(); // Feed watchdog after HTTP operation
+  feedWDT();
   if (rc != 200) {
     Serial.printf("❌ SatoNak days since ATH GET failed (%d)\n", rc);
     http.end();
@@ -1237,6 +1282,7 @@ bool fetchDaysSinceAthFromSatoNak() {
   }
 
   String payload = http.getString();
+  feedWDT();
   http.end();
 
   // Parse days since ATH - API returns plain text like "45"
@@ -1419,17 +1465,37 @@ bool fetchDaysSinceAthFromSatoNak() {
       Serial.printf("📈 Free heap after fetch: %d bytes\n", ESP.getFreeHeap());
     }
 
-    void armRebootMessage(unsigned long msFromNow = 2500)
+    // Blocking helper to show reboot messages reliably
+    void showRebootMessages()
     {
-      // Show initial confirmation with scrolling for visibility
-      P.displayZoneText(ZONE_UPPER, "SETTINGS", PA_CENTER, 50, 1500, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-      P.displayZoneText(ZONE_LOWER, "SAVED!", PA_CENTER, 50, 1500, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+      Serial.println("💾 Showing SETTINGS SAVED message...");
+      P.displayClear(); // Clear old text first
+      P.displayZoneText(ZONE_UPPER, "SETTINGS", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
+      P.displayZoneText(ZONE_LOWER, "SAVED!", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
       P.displayReset(ZONE_UPPER);
       P.displayReset(ZONE_LOWER);
-      Serial.println("💾 Settings saved, preparing to reboot...");
-      pendingReboot = true;
-      rebootPhaseShown = false;
-      rebootAt = millis() + msFromNow;
+      
+      unsigned long start = millis();
+      while (millis() - start < 2000)
+      {
+        esp_task_wdt_reset();
+        P.displayAnimate();
+        delay(10);
+      }
+      
+      Serial.println("🔄 Showing REBOOTING message...");
+      P.displayZoneText(ZONE_UPPER, "REBOOTING", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
+      P.displayZoneText(ZONE_LOWER, "NOW...", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
+      P.displayReset(ZONE_UPPER);
+      P.displayReset(ZONE_LOWER);
+      
+      start = millis();
+      while (millis() - start < 2000)
+      {
+        esp_task_wdt_reset();
+        P.displayAnimate();
+        delay(10);
+      }
     }
 
     // Setup of device
@@ -1522,42 +1588,31 @@ bool fetchDaysSinceAthFromSatoNak() {
 
       randomSeed(esp_random());
 
-      // Show Welcome Loop BEFORE restoring full brightness (if WiFi not connected)
+      // Show IP/Portal immediately (if WiFi not connected)
       if (!wifiConnected)
       {
-        // Set a visible brightness for the welcome message
-        Serial.println("💡 Setting brightness for welcome message...");
+        // Set a visible brightness for portal screen
+        Serial.println("💡 Setting brightness for portal screen...");
         P.setIntensity(ZONE_UPPER, 3);  // Medium-low brightness for setup
         P.setIntensity(ZONE_LOWER, 3);
         
-        // Play welcome message once with scroll effect
-        Serial.println("📢 Displaying welcome message...");
-        P.displayZoneText(ZONE_UPPER, "STACKSWORTH", PA_CENTER, 50, 0, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-        P.displayZoneText(ZONE_LOWER, "BITCOIN MATRIX", PA_CENTER, 50, 0, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+        // Show portal status and IP address immediately - NO welcome animation
+        Serial.println("📡 Showing portal status and IP...");
+        IPAddress apIP = WiFi.softAPIP();
+        String ipDisplay = apIP.toString();
+        P.displayZoneText(ZONE_UPPER, "OPEN PORTAL", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
+        P.displayZoneText(ZONE_LOWER, ipDisplay.c_str(), PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
         P.displayReset(ZONE_UPPER);
         P.displayReset(ZONE_LOWER);
         
-        // Animate until message completes
-        unsigned long msgStart = millis();
-        while (!P.displayAnimate() && millis() - msgStart < 8000)
-        {
-          esp_task_wdt_reset();
+        // Pump display once to lock it in
+        for (int i = 0; i < 10; i++) {
+          P.displayAnimate();
           delay(10);
         }
         
-        delay(500); // Brief pause
-        
-        // After welcome, show IP address and portal status
-        Serial.println("📡 Portal ready, waiting for connection...");
-        IPAddress apIP = WiFi.softAPIP();
-        String ipDisplay = apIP.toString();
-        P.displayZoneText(ZONE_UPPER, ipDisplay.c_str(), PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
-        P.displayZoneText(ZONE_LOWER, "PORTAL OPEN", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
-        P.displayReset(ZONE_UPPER);
-        P.displayReset(ZONE_LOWER);
-        P.displayAnimate(); // Display immediately
         apMsgShown = true;
-        Serial.println("✅ Portal screen displayed");
+        Serial.println("✅ Portal screen displayed - ready for setup");
       }
 
       // Now restore user's preferred brightness after welcome screens
@@ -1675,8 +1730,9 @@ bool fetchDaysSinceAthFromSatoNak() {
     // ✅ SEND HTTP 200 RESPONSE FIRST
     request->send(200, "text/plain", "Settings saved! Rebooting...");
 
-    // Arm reboot message and let loop() animate until restart
-    armRebootMessage(2500);
+    // Show reboot messages and restart
+    showRebootMessages();
+    ESP.restart();
   } else {
     Serial.println("❌ Missing parameters in form submission!");
     request->send(400, "text/plain", "Missing parameters");
@@ -1763,43 +1819,48 @@ bool fetchDaysSinceAthFromSatoNak() {
       minerName = lastMinerName;
       
     
-      // Initial API Fetch (staggered, WDT-safe)
-      Serial.println("🌍 Fetching initial data (staggered, WDT-safe)...");
+      // Initial API Fetch (staggered, WDT-safe) - ONLY if WiFi connected
+      if (wifiConnected) {
+        Serial.println("🌍 Fetching initial data (staggered, WDT-safe)...");
 
-      unsigned long now = millis();
-      esp_task_wdt_reset(); fetchBlockHeight(); lastBlockHeightFetch = now;
-      delay(1000);
-      esp_task_wdt_reset(); fetchMinerFromSatoNak(); lastMinerFetch = now;
-      delay(1000);
-      esp_task_wdt_reset(); fetchBitcoinData(); lastPriceFetch = now;
-      delay(1000);
-      esp_task_wdt_reset(); fetchChange24hFromSatoNak(); lastChange24hFetch = now;
-      delay(1000);
-      esp_task_wdt_reset(); fetchFeeRate(); lastFeeFetch = now;
-      delay(1000);
-      esp_task_wdt_reset(); fetchHashrateFromSatoNak(); lastHashrateFetch = now;
-      delay(1000);
-      esp_task_wdt_reset(); fetchCircSupplyFromSatoNak(); lastCircSupplyFetch = now;
-      delay(1000);
-      esp_task_wdt_reset(); fetchAthFromSatoNak(); lastAthFetch = now;
-      delay(1000);
-      esp_task_wdt_reset(); fetchDaysSinceAthFromSatoNak(); lastDaysAthFetch = now;
-      delay(1000);
-      esp_task_wdt_reset(); fetchTime();
-      esp_task_wdt_reset(); fetchLatLonFromCity();
-      esp_task_wdt_reset(); fetchWeather();
+        unsigned long now = millis();
+        esp_task_wdt_reset(); fetchBlockHeight(); lastBlockHeightFetch = now;
+        delay(1000);
+        esp_task_wdt_reset(); fetchMinerFromSatoNak(); lastMinerFetch = now;
+        delay(1000);
+        esp_task_wdt_reset(); fetchBitcoinData(); lastPriceFetch = now;
+        delay(1000);
+        esp_task_wdt_reset(); fetchChange24hFromSatoNak(); lastChange24hFetch = now;
+        delay(1000);
+        esp_task_wdt_reset(); fetchFeeRate(); lastFeeFetch = now;
+        delay(1000);
+        esp_task_wdt_reset(); fetchHashrateFromSatoNak(); lastHashrateFetch = now;
+        delay(1000);
+        esp_task_wdt_reset(); fetchCircSupplyFromSatoNak(); lastCircSupplyFetch = now;
+        delay(1000);
+        esp_task_wdt_reset(); fetchAthFromSatoNak(); lastAthFetch = now;
+        delay(1000);
+        esp_task_wdt_reset(); fetchDaysSinceAthFromSatoNak(); lastDaysAthFetch = now;
+        delay(1000);
+        esp_task_wdt_reset(); fetchTime();
+        esp_task_wdt_reset(); fetchLatLonFromCity();
+        esp_task_wdt_reset(); fetchWeather();
 
-      lastFetchTime = millis();
-      Serial.println("✅ Initial data fetch complete!");
-      // Save good values for future fallback use
-      saveDisplayCache();
-      lastWeatherUpdate = millis() - WEATHER_UPDATE_INTERVAL; // ⬅️ force weather update ready immediately
+        lastFetchTime = millis();
+        Serial.println("✅ Initial data fetch complete!");
+        // Save good values for future fallback use
+        saveDisplayCache();
+        lastWeatherUpdate = millis() - WEATHER_UPDATE_INTERVAL; // ⬅️ force weather update ready immediately
 
-      // Show Connection Success Message
-      Serial.println("📢 Displaying WiFi connected message on Matrix...");
-      P.displayZoneText(ZONE_UPPER, "WIFI", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-      P.displayZoneText(ZONE_LOWER, "CONNECTED", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
-      delay(2000);
+        // Show Connection Success Message
+        Serial.println("📢 Displaying WiFi connected message on Matrix...");
+        P.displayZoneText(ZONE_UPPER, "WIFI", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+        P.displayZoneText(ZONE_LOWER, "CONNECTED", PA_CENTER, 0, 2000, PA_FADE, PA_FADE);
+        delay(2000);
+      } else {
+        Serial.println("⏭️ Skipping initial data fetch - WiFi not connected (AP mode)");
+        Serial.println("📦 Using cached values from preferences");
+      }
 
       // 👇  Manually trigger first animation cycle!
       cycle = 0;                                              // Start at first data set
@@ -1821,67 +1882,52 @@ bool fetchDaysSinceAthFromSatoNak() {
       esp_task_wdt_reset();           // Reset watchdog
       dnsServer.processNextRequest(); // Handle captive portal DNS magic
 
-      // If in AP portal mode, keep showing PORTAL READY
+      // If in AP portal mode, keep showing PORTAL OPEN
       if (apMode && WiFi.status() != WL_CONNECTED)
       {
-        esp_task_wdt_reset();
-        P.displayAnimate();
-        delay(10);
-        return;
-      }
-      else if (apMode && WiFi.status() == WL_CONNECTED)
-      {
-        apMode = false; // Exit portal mode once STA connects
-      }
-
-      // Handle pending reboot messaging without blocking the async server
-      if (pendingReboot)
-      {
-        esp_task_wdt_reset();
-        P.displayAnimate();
-
-        // Swap to REBOOTING phase shortly before restart
-        if (!rebootPhaseShown && (long)(millis() - (rebootAt - 1200)) >= 0)
+        feedWDT(); // Feed watchdog before processing
+        
+        // Keep the portal display active (re-set if needed)
+        if (!apMsgShown)
         {
-          P.displayZoneText(ZONE_UPPER, "REBOOTING", PA_CENTER, 50, 1000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-          P.displayZoneText(ZONE_LOWER, "NOW...", PA_CENTER, 50, 1000, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+          IPAddress apIP = WiFi.softAPIP();
+          String ipDisplay = apIP.toString();
+          P.displayZoneText(ZONE_UPPER, "OPEN PORTAL", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
+          P.displayZoneText(ZONE_LOWER, ipDisplay.c_str(), PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
           P.displayReset(ZONE_UPPER);
           P.displayReset(ZONE_LOWER);
-          Serial.println("🔄 Rebooting device...");
-          rebootPhaseShown = true;
+          apMsgShown = true;
         }
-
-        if ((long)(millis() - rebootAt) >= 0)
-        {
-          P.displayAnimate();
-          delay(150);
-          ESP.restart();
-        }
+        
+        P.displayAnimate();
+        feedWDT(); // Feed watchdog after display
+        delay(50); // Shorter delay to keep WDT happy
         return;
+      }
+      else if (apMode && wifiConnected)
+      {
+        apMode = false; // Exit portal mode only after we truly connect to router (STA)
       }
 
       // 🌐 WiFi RECONNECTION MONITOR (check every 10 seconds)
+      // Only attempt reconnection if NOT in AP mode
       static unsigned long lastWiFiCheck = 0;
+      static bool reconnecting = false;
       unsigned long now = millis();
-      if (now - lastWiFiCheck >= 10000) {
+      
+      if (!apMode && savedSSID.length() > 0 && now - lastWiFiCheck >= 10000) {
         lastWiFiCheck = now;
         
-        if (WiFi.status() != WL_CONNECTED) {
+        if (WiFi.status() != WL_CONNECTED && !reconnecting) {
           Serial.println("⚠️ WiFi disconnected! Attempting to reconnect...");
           WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
-          
-          // Wait up to 10 seconds for reconnection
-          unsigned long reconnectStart = millis();
-          while (WiFi.status() != WL_CONNECTED && millis() - reconnectStart < 10000) {
-            esp_task_wdt_reset(); // Keep feeding watchdog during reconnection
-            delay(500);
-          }
-          
-          if (WiFi.status() == WL_CONNECTED) {
-            Serial.println("✅ WiFi reconnected!");
-          } else {
-            Serial.println("❌ WiFi reconnection failed. Will retry in 10 seconds.");
-          }
+          reconnecting = true;
+          wifiConnected = false;
+          // No blocking wait - let display loop continue with cached data
+        } else if (WiFi.status() == WL_CONNECTED && reconnecting) {
+          Serial.println("✅ WiFi reconnected!");
+          reconnecting = false;
+          wifiConnected = true;
         }
       }
 
