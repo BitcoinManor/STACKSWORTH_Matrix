@@ -1,6 +1,6 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.45
+// v2.0.452
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
@@ -1860,34 +1860,40 @@ bool fetchDaysSinceAthFromSatoNak() {
       dnsServer.processNextRequest(); // Handle captive portal DNS magic
 
       // 🚀 INITIAL FETCH - Run once on first loop iteration (safe for lwIP)
+      // ⚠️ CONSERVATIVE: Only try SatoNak APIs, skip fallbacks to prevent WDT crashes
+      // If SatoNak is down, we use cached values and retry in normal loop cycle
       if (wifiConnected && !initialFetchDone && !apMode) {
-        Serial.println("🌍 Fetching initial data (first loop iteration)...");
+        Serial.println("🌍 Fetching initial data (first loop iteration - SatoNak only, no fallbacks)...");
         
         unsigned long now = millis();
-        esp_task_wdt_reset(); fetchBlockHeight(); lastBlockHeightFetch = now;
-        delay(1000);
+        
+        // Try each API but don't hang if they fail - cached data will be used
+        esp_task_wdt_reset(); fetchHeightFromSatoNak(); lastBlockHeightFetch = now;
+        delay(500);
         esp_task_wdt_reset(); fetchMinerFromSatoNak(); lastMinerFetch = now;
-        delay(1000);
-        esp_task_wdt_reset(); fetchBitcoinData(); lastPriceFetch = now;
-        delay(1000);
+        delay(500);
+        esp_task_wdt_reset(); fetchPriceFromSatoNak(); lastPriceFetch = now;  // Direct SatoNak only, no CoinGecko fallback
+        delay(500);
         esp_task_wdt_reset(); fetchChange24hFromSatoNak(); lastChange24hFetch = now;
-        delay(1000);
-        esp_task_wdt_reset(); fetchFeeRate(); lastFeeFetch = now;
-        delay(1000);
+        delay(500);
+        esp_task_wdt_reset(); fetchFeeFromSatoNak(); lastFeeFetch = now;  // Direct SatoNak only, no mempool.space fallback
+        delay(500);
         esp_task_wdt_reset(); fetchHashrateFromSatoNak(); lastHashrateFetch = now;
-        delay(1000);
+        delay(500);
         esp_task_wdt_reset(); fetchCircSupplyFromSatoNak(); lastCircSupplyFetch = now;
-        delay(1000);
+        delay(500);
         esp_task_wdt_reset(); fetchAthFromSatoNak(); lastAthFetch = now;
-        delay(1000);
+        delay(500);
         esp_task_wdt_reset(); fetchDaysSinceAthFromSatoNak(); lastDaysAthFetch = now;
-        delay(1000);
+        delay(500);
         esp_task_wdt_reset(); fetchTime();
+        delay(100);
         esp_task_wdt_reset(); fetchLatLonFromCity();
+        delay(100);
         esp_task_wdt_reset(); fetchWeather();
 
         lastFetchTime = millis();
-        Serial.println("✅ Initial data fetch complete!");
+        Serial.println("✅ Initial data fetch complete! (Fallback APIs will retry in normal loop if needed)");
         saveDisplayCache();
         
         // Show Connection Success Message
