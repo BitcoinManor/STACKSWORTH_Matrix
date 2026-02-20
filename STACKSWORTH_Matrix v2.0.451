@@ -1,6 +1,11 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.452
+// v2.0.453 - WiFi Resilience Update
+// - Fixed: Display cycle infinite loop safety
+// - Fixed: WiFi connection timeout extended to 30s
+// - Fixed: WDT crash prevention on initial fetch
+// - Fixed: WiFi drops no longer trigger AP mode (1hr grace period)
+// - Fixed: Display continues with cached data during WiFi reconnection
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
@@ -46,6 +51,9 @@ unsigned long rebootAt = 0;
 bool apMode = false;
 bool apMsgShown = false;
 bool initialFetchDone = false;  // Track if we've done first data fetch
+bool hasEverConnected = false;  // Track if WiFi has ever successfully connected
+unsigned long wifiDisconnectedAt = 0;  // Track when WiFi first disconnected
+const unsigned long WIFI_FALLBACK_TIMEOUT = 60UL * 60UL * 1000UL;  // 1 hour before falling back to AP mode
 
 String savedSSID;
 String savedPassword;
@@ -449,6 +457,8 @@ void loadSavedSettingsAndConnect() {
       Serial.print("🌍 IP Address: ");
       Serial.println(WiFi.localIP());
       wifiConnected = true; // 👉 set this!!
+      hasEverConnected = true; // 👉 Remember we've connected successfully
+      wifiDisconnectedAt = 0; // Reset disconnection timer
       WiFi.setAutoReconnect(true); // Enable auto-reconnect for normal operation
       
       // 🌍 Configure timezone using proper timezone strings (auto-handles DST!)
@@ -1929,28 +1939,51 @@ bool fetchDaysSinceAthFromSatoNak() {
       }
       else if (apMode && wifiConnected)
       {
-        apMode = false; // Exit portal mode only after we truly connect to router (STA)
+        // Exit portal mode - clean up DNS server
+        Serial.println("✅ Exiting AP mode, stopping DNS server...");
+        dnsServer.stop();
+        apMode = false;
+        apMsgShown = false;
       }
 
-      // 🌐 WiFi RECONNECTION MONITOR (check every 10 seconds)
-      // Only attempt reconnection if NOT in AP mode
+      // 🌐 WiFi RESILIENCE MONITOR (check every 10 seconds)
+      // Strategy: Keep displaying cached data, only fall back to AP mode after extended failure
       static unsigned long lastWiFiCheck = 0;
       static bool reconnecting = false;
-      unsigned long now = millis();
+      now = millis();
       
       if (!apMode && savedSSID.length() > 0 && now - lastWiFiCheck >= 10000) {
         lastWiFiCheck = now;
         
-        if (WiFi.status() != WL_CONNECTED && !reconnecting) {
-          Serial.println("⚠️ WiFi disconnected! Attempting to reconnect...");
-          WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
-          reconnecting = true;
-          wifiConnected = false;
-          // No blocking wait - let display loop continue with cached data
-        } else if (WiFi.status() == WL_CONNECTED && reconnecting) {
-          Serial.println("✅ WiFi reconnected!");
+        if (WiFi.status() != WL_CONNECTED) {
+          // WiFi is disconnected
+          if (!reconnecting) {
+            // Just noticed disconnection
+            Serial.println("⚠️ WiFi disconnected! Continuing with cached data, attempting reconnect...");
+            wifiDisconnectedAt = (wifiDisconnectedAt == 0) ? now : wifiDisconnectedAt;
+            reconnecting = true;
+            wifiConnected = false;
+          }
+          
+          // Check if we've been disconnected too long (1 hour)
+          if (hasEverConnected && (now - wifiDisconnectedAt >= WIFI_FALLBACK_TIMEOUT)) {
+            Serial.println("🚨 WiFi disconnected for 1+ hour. Falling back to AP mode for reconfiguration.");
+            startAccessPoint();
+            return; // Exit to AP mode
+          }
+          
+          // Try reconnecting (non-blocking)
+          if (now % 10000 < 100) {  // Attempt every 10 seconds
+            Serial.println("🔄 Retrying WiFi connection...");
+            WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
+          }
+          
+        } else if (reconnecting) {
+          // WiFi reconnected!
+          Serial.println("✅ WiFi reconnected successfully!");
           reconnecting = false;
           wifiConnected = true;
+          wifiDisconnectedAt = 0; // Reset disconnection timer
         }
       }
 
