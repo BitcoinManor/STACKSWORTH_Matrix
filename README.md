@@ -6,8 +6,7 @@
 Welcome to **STACKSWORTH**, the future of open-source Bitcoin displays.  
 Watch Bitcoin's Pulse at a Glance in real time  — price, block height, mempool fees, sats/dollar and weather — all from a sleek, plug-and-play LED matrix 
 that’s built for Bitcoiners, by Bitcoiners.
-
----
+****WORKING TO PROVIDE OTA ABILITIES TO MAKE THINGS EASIER FOR THE USER, Coming MARCH 2026---
 
 ## 🚀 Latest Firmware: v1.0.2
 
