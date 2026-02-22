@@ -50,6 +50,7 @@ Built for signal, not noise.
 ---
 
 ## 🧱 Metrics Displayed
+ALL METRICS DISPLAYED USING OUR SATONAK SELF SOVEREIGN SERVER
 
 - **💰 BTC Price (USD)** — via CoinGecko  
 - **📦 Block Height** — via Blockchain.info  
