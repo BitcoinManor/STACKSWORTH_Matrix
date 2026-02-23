@@ -1,11 +1,7 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.453 - WiFi Resilience Update
-// - Fixed: Display cycle infinite loop safety
-// - Fixed: WiFi connection timeout extended to 30s
-// - Fixed: WDT crash prevention on initial fetch
-// - Fixed: WiFi drops no longer trigger AP mode (1hr grace period)
-// - Fixed: Display continues with cached data during WiFi reconnection
+// v2.0.4535 - Code Optimization Update
+// - Improved: Heap memory checks now use named constant (MIN_HEAP_REQUIRED) for easier maintenance
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
@@ -29,6 +25,8 @@ DNSServer dnsServer;
 Preferences prefs;
 #include <ESPmDNS.h>  // 🌐 For mDNS hostname resolution (Matrix.local)
 
+// 🧠 Memory Management Constants
+#define MIN_HEAP_REQUIRED 160000  // Minimum free heap (bytes) required before API calls
 
 // retrieve and store the MAC
 String getShortMAC() {
@@ -529,7 +527,7 @@ void loadSavedSettingsAndConnect() {
     return;
   }
 
-  if (ESP.getFreeHeap() < 160000) {
+  if (ESP.getFreeHeap() < MIN_HEAP_REQUIRED) {
     Serial.println("❌ Not enough heap to safely fetch. Skipping BTC fetch.");
     return;
   }
@@ -585,7 +583,7 @@ void loadSavedSettingsAndConnect() {
 
 // Returns true on success, false on any failure (so callers can fallback)
 bool fetchPriceFromSatoNak() {
-  if (ESP.getFreeHeap() < 160000) {
+  if (ESP.getFreeHeap() < MIN_HEAP_REQUIRED) {
     Serial.println("❌ Low heap; skipping SatoNak price fetch");
     return false;
   }
@@ -711,7 +709,7 @@ bool fetchPriceFromSatoNak() {
 
 // Fetch miner info from SatoNak API
 bool fetchMinerFromSatoNak() {
-  if (ESP.getFreeHeap() < 160000) {
+  if (ESP.getFreeHeap() < MIN_HEAP_REQUIRED) {
     Serial.println("❌ Low heap; skipping SatoNak miner fetch");
     return false;
   }
@@ -770,7 +768,7 @@ bool fetchMinerFromSatoNak() {
 
 // Fetch block height from SatoNak API
 bool fetchHeightFromSatoNak() {
-  if (ESP.getFreeHeap() < 160000) {
+  if (ESP.getFreeHeap() < MIN_HEAP_REQUIRED) {
     Serial.println("❌ Low heap; skipping SatoNak height fetch");
     return false;
   }
@@ -843,7 +841,7 @@ bool fetchHeightFromSatoNak() {
 
 // Fetch fee rate from SatoNak API
 bool fetchFeeFromSatoNak() {
-  if (ESP.getFreeHeap() < 160000) {
+  if (ESP.getFreeHeap() < MIN_HEAP_REQUIRED) {
     Serial.println("❌ Low heap; skipping SatoNak fee fetch");
     return false;
   }
@@ -935,7 +933,7 @@ void fetchFeeRate() {
   
   Serial.println("⚠️ SatoNak failed, trying mempool.space fallback");
   
-  if (ESP.getFreeHeap() < 160000) {
+  if (ESP.getFreeHeap() < MIN_HEAP_REQUIRED) {
     Serial.println("🛑 Low heap before Fee fetch; skipping");
     return;
   }
@@ -990,7 +988,7 @@ void fetchFeeRate() {
 
 // Fetch hashrate from SatoNak API
 bool fetchHashrateFromSatoNak() {
-  if (ESP.getFreeHeap() < 160000) {
+  if (ESP.getFreeHeap() < MIN_HEAP_REQUIRED) {
     Serial.println("❌ Low heap; skipping SatoNak hashrate fetch");
     return false;
   }
@@ -1051,7 +1049,7 @@ bool fetchHashrateFromSatoNak() {
 
 // Fetch circulating supply from SatoNak API
 bool fetchCircSupplyFromSatoNak() {
-  if (ESP.getFreeHeap() < 160000) {
+  if (ESP.getFreeHeap() < MIN_HEAP_REQUIRED) {
     Serial.println("❌ Low heap; skipping SatoNak circulating supply fetch");
     return false;
   }
@@ -1134,7 +1132,7 @@ bool fetchCircSupplyFromSatoNak() {
 
 // Fetch ATH price from SatoNak API
 bool fetchAthFromSatoNak() {
-  if (ESP.getFreeHeap() < 160000) {
+  if (ESP.getFreeHeap() < MIN_HEAP_REQUIRED) {
     Serial.println("❌ Low heap; skipping SatoNak ATH fetch");
     return false;
   }
@@ -1201,7 +1199,7 @@ bool fetchAthFromSatoNak() {
 
 // Fetch 24H change from SatoNak API
 bool fetchChange24hFromSatoNak() {
-  if (ESP.getFreeHeap() < 160000) {
+  if (ESP.getFreeHeap() < MIN_HEAP_REQUIRED) {
     Serial.println("❌ Low heap; skipping SatoNak 24H change fetch");
     return false;
   }
@@ -1269,7 +1267,7 @@ bool fetchChange24hFromSatoNak() {
 
 // Fetch days since ATH from SatoNak API
 bool fetchDaysSinceAthFromSatoNak() {
-  if (ESP.getFreeHeap() < 160000) {
+  if (ESP.getFreeHeap() < MIN_HEAP_REQUIRED) {
     Serial.println("❌ Low heap; skipping SatoNak days since ATH fetch");
     return false;
   }
@@ -1336,7 +1334,7 @@ bool fetchDaysSinceAthFromSatoNak() {
 
     void fetchTime()
     {
-      if (ESP.getFreeHeap() < 160000)
+      if (ESP.getFreeHeap() < MIN_HEAP_REQUIRED)
       {
         Serial.println("❌ Not enough heap to safely fetch. Skipping BTC fetch.");
         return;
@@ -1369,7 +1367,7 @@ bool fetchDaysSinceAthFromSatoNak() {
 
     void fetchLatLonFromCity()
     {
-      if (ESP.getFreeHeap() < 160000)
+      if (ESP.getFreeHeap() < MIN_HEAP_REQUIRED)
       {
         Serial.println("❌ Not enough heap to safely fetch. Skipping BTC fetch.");
         return;
@@ -1426,7 +1424,7 @@ bool fetchDaysSinceAthFromSatoNak() {
 
     void fetchWeather()
     {
-      if (ESP.getFreeHeap() < 160000)
+      if (ESP.getFreeHeap() < MIN_HEAP_REQUIRED)
       {
         Serial.println("❌ Not enough heap to safely fetch. Skipping BTC fetch.");
         return;
@@ -1950,7 +1948,7 @@ bool fetchDaysSinceAthFromSatoNak() {
       // Strategy: Keep displaying cached data, only fall back to AP mode after extended failure
       static unsigned long lastWiFiCheck = 0;
       static bool reconnecting = false;
-      now = millis();
+      unsigned long now = millis();
       
       if (!apMode && savedSSID.length() > 0 && now - lastWiFiCheck >= 10000) {
         lastWiFiCheck = now;
