@@ -1,7 +1,16 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.4535 - Code Optimization Update
-// - Improved: Heap memory checks now use named constant (MIN_HEAP_REQUIRED) for easier maintenance
+// v2.0.46 - Device Identification & Personalization
+// - Fixed: Display cycle infinite loop safety
+// - Fixed: WiFi connection timeout extended to 30s  
+// - Fixed: WDT crash prevention on initial fetch
+// - Fixed: WiFi drops no longer trigger AP mode (1hr grace period)
+// - Fixed: Display continues with cached data during WiFi reconnection
+// - Improved: Heap memory checks now use named constant (MIN_HEAP_REQUIRED)
+// - NEW: Device naming system - users can nickname their Matrix
+// - NEW: Smart mDNS hostname (uses nickname or MAC-based fallback)
+// - NEW: Identify endpoint - click button to see which device you're configuring
+// - NEW: Device ID displayed on portal for multi-unit support
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
@@ -61,6 +70,7 @@ String savedTheme;     // 🎨 New: User's preferred theme (scroll, fade)
 String savedTopText;   // 📝 New: User's custom top row message (max 10 chars)
 String savedBottomText;// 📝 New: User's custom bottom row message (max 10 chars)
 String savedTempUnit;  // 🌡️ New: User's preferred temperature unit (C or F)
+String savedDeviceName;// 🆔 New: User's device nickname (for multi-unit households)
 uint8_t savedBrightness = 2; // 💡 New: User's brightness preference (1-15)
 bool displayEnabled[15] = {true, true, true, true, true, true, true, true, true, true, true, true, true, true, true}; // 📊 Display options for each case (0-14)
 int savedTimezone = -99;
@@ -412,6 +422,7 @@ void loadSavedSettingsAndConnect() {
   savedTopText = prefs.getString("toptext", "");       // 📝 Custom top row message
   savedBottomText = prefs.getString("bottomtext", ""); // 📝 Custom bottom row message
   savedTempUnit = prefs.getString("tempunit", "C");    // 🌡️ Default to Celsius
+  savedDeviceName = prefs.getString("devicename", ""); // 🆔 User's device nickname
   savedBrightness = prefs.getUChar("brightness", 2);  // 💡 Load brightness preference (default 2)
   savedTimezone = prefs.getInt("timezone", -99);
   BRIGHTNESS = savedBrightness;                        // 💡 Apply saved brightness
@@ -434,6 +445,7 @@ void loadSavedSettingsAndConnect() {
     Serial.println("Custom Top: " + savedTopText);       // 📝 New
     Serial.println("Custom Bottom: " + savedBottomText); // 📝 New
     Serial.println("Temperature Unit: " + savedTempUnit); // 🌡️ New
+    Serial.println("Device Name: " + savedDeviceName);   // 🆔 New
     Serial.printf("Brightness: %d/15\n", BRIGHTNESS);    // 💡 New
     Serial.print("Timezone offset (hours): ");
     Serial.println(savedTimezone);
@@ -1680,6 +1692,7 @@ bool fetchDaysSinceAthFromSatoNak() {
     String toptext = request->getParam("toptext", true)->value();
     String bottomtext = request->getParam("bottomtext", true)->value();
     String tempunit = request->getParam("tempunit", true)->value();
+    String devicename = request->getParam("devicename", true)->value();
     String brightness = request->getParam("brightness", true)->value();
 
     // ✅ If user left SSID/PW blank, keep existing saved values
@@ -1697,6 +1710,8 @@ bool fetchDaysSinceAthFromSatoNak() {
     // Validate and limit custom text to 11 characters
     if (toptext.length() > 11) toptext = toptext.substring(0, 11);
     if (bottomtext.length() > 11) bottomtext = bottomtext.substring(0, 11);
+    // Validate and limit device name to 20 characters
+    if (devicename.length() > 20) devicename = devicename.substring(0, 20);
 
     Serial.println("✅ Saving WiFi Settings:");
     Serial.println("SSID: " + ssid);
@@ -1708,6 +1723,7 @@ bool fetchDaysSinceAthFromSatoNak() {
     Serial.println("Custom Top: " + toptext);
     Serial.println("Custom Bottom: " + bottomtext);
     Serial.println("Temperature Unit: " + tempunit);
+    Serial.println("Device Name: " + devicename);
     Serial.println("Brightness: " + brightness);
     prefs.putString("ssid", ssid);
     prefs.putString("password", password);
@@ -1717,6 +1733,7 @@ bool fetchDaysSinceAthFromSatoNak() {
     prefs.putString("toptext", toptext);                            // 📝 Store custom top text
     prefs.putString("bottomtext", bottomtext);                      // 📝 Store custom bottom text
     prefs.putString("tempunit", tempunit);                          // 🌡️ Store temperature unit
+    prefs.putString("devicename", devicename);                      // 🆔 Store device nickname
     prefs.putUChar("brightness", brightness.toInt());              // 💡 Store brightness
     
     // 📊 Store display options (show0-show14)
@@ -1764,10 +1781,40 @@ bool fetchDaysSinceAthFromSatoNak() {
   } });
 
 
-      // Serve MAC fragment to the portal
+      // Serve device info to the portal
+      server.on("/deviceinfo", HTTP_GET, [](AsyncWebServerRequest *request) {
+        String info = "{\"macid\":\"" + getShortMAC() + "\",";
+        info += "\"devicename\":\"" + savedDeviceName + "\",";
+        info += "\"version\":\"v2.0.46\"}";
+        request->send(200, "application/json", info);
+      });
+      
+      // Legacy endpoint for backward compatibility
       server.on("/macid", HTTP_GET, [](AsyncWebServerRequest *request) {
-      request->send(200, "text/plain", getShortMAC());
-    });
+        request->send(200, "text/plain", getShortMAC());
+      });
+      
+      // 🔍 Identify endpoint - blink display to show which device user is configuring
+      server.on("/identify", HTTP_GET, [](AsyncWebServerRequest *request) {
+        Serial.println("🔍 Identify button pressed - showing portal active message");
+        
+        // Show identification message on display
+        P.displayClear();
+        P.displayZoneText(ZONE_UPPER, "PORTAL", PA_CENTER, 0, 5000, PA_FADE, PA_FADE);
+        P.displayZoneText(ZONE_LOWER, "ACTIVE", PA_CENTER, 0, 5000, PA_FADE, PA_FADE);
+        P.synchZoneStart();
+        
+        // Wait for animation to complete
+        unsigned long startTime = millis();
+        while (millis() - startTime < 5000) {
+          P.displayAnimate();
+          esp_task_wdt_reset();
+          delay(10);
+        }
+        
+        request->send(200, "text/plain", "Device identified!");
+        Serial.println("✅ Identify animation complete");
+      });
 
       // Brightness control endpoint
       server.on("/brightness", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -1798,12 +1845,34 @@ bool fetchDaysSinceAthFromSatoNak() {
       Serial.println("🌍 Async Web server started");
       delay(2000); // 🕒 Let server stabilize after starting
 
-      // 🌐 Setup mDNS for Matrix.local hostname
-      if (!MDNS.begin("Matrix")) {
+      // 🌐 Setup mDNS with smart hostname (nickname-based or MAC-based fallback)
+      String mdnsHostname = "Matrix";  // Default
+      
+      if (savedDeviceName.length() > 0) {
+        // User has named their device - use sanitized nickname
+        String sanitized = savedDeviceName;
+        sanitized.replace(" ", "-");  // "Living Room" -> "Living-Room"
+        sanitized.replace("_", "-");
+        // Remove any non-alphanumeric chars except hyphens
+        for (int i = sanitized.length() - 1; i >= 0; i--) {
+          char c = sanitized.charAt(i);
+          if (!isalnum(c) && c != '-') {
+            sanitized.remove(i, 1);
+          }
+        }
+        if (sanitized.length() > 0) {
+          mdnsHostname = "Matrix-" + sanitized;
+        }
+      } else {
+        // No nickname - use MAC-based hostname for uniqueness
+        mdnsHostname = "Matrix-" + macID;
+      }
+      
+      if (!MDNS.begin(mdnsHostname.c_str())) {
         Serial.println("❌ Error setting up mDNS responder!");
       } else {
-        Serial.println("✅ mDNS responder started - Access at http://Matrix.local");
-        // Add service discovery if needed
+        Serial.printf("✅ mDNS responder started - Access at http://%s.local\n", mdnsHostname.c_str());
+        Serial.println("✅ Also accessible at http://Matrix.local (if first/only device)");
         MDNS.addService("http", "tcp", 80);
       }
 
