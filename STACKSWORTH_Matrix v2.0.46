@@ -1,6 +1,7 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.46 - Device Identification & Personalization
+// v2.0.47 - WDT Crash Fix (PRODUCTION READY)
+// - CRITICAL FIX: Added watchdog resets between sequential API calls (prevents 12s timeout)
 // - Fixed: Display cycle infinite loop safety
 // - Fixed: WiFi connection timeout extended to 30s  
 // - Fixed: WDT crash prevention on initial fetch
@@ -8,9 +9,9 @@
 // - Fixed: Display continues with cached data during WiFi reconnection
 // - Improved: Heap memory checks now use named constant (MIN_HEAP_REQUIRED)
 // - NEW: Device naming system - users can nickname their Matrix
-// - NEW: Smart mDNS hostname (uses nickname or MAC-based fallback)
-// - NEW: Identify endpoint - click button to see which device you're configuring
-// - NEW: Device ID displayed on portal for multi-unit support
+// - NEW: All units use Matrix.local (simple & consistent)
+// - NEW: Identify endpoint - click button to flash display and confirm which unit
+// - NEW: Device ID displayed on portal for multi-unit identification
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
@@ -1785,7 +1786,7 @@ bool fetchDaysSinceAthFromSatoNak() {
       server.on("/deviceinfo", HTTP_GET, [](AsyncWebServerRequest *request) {
         String info = "{\"macid\":\"" + getShortMAC() + "\",";
         info += "\"devicename\":\"" + savedDeviceName + "\",";
-        info += "\"version\":\"v2.0.46\"}";
+        info += "\"version\":\"v2.0.47\"}";
         request->send(200, "application/json", info);
       });
       
@@ -1845,34 +1846,13 @@ bool fetchDaysSinceAthFromSatoNak() {
       Serial.println("🌍 Async Web server started");
       delay(2000); // 🕒 Let server stabilize after starting
 
-      // 🌐 Setup mDNS with smart hostname (nickname-based or MAC-based fallback)
-      String mdnsHostname = "Matrix";  // Default
-      
-      if (savedDeviceName.length() > 0) {
-        // User has named their device - use sanitized nickname
-        String sanitized = savedDeviceName;
-        sanitized.replace(" ", "-");  // "Living Room" -> "Living-Room"
-        sanitized.replace("_", "-");
-        // Remove any non-alphanumeric chars except hyphens
-        for (int i = sanitized.length() - 1; i >= 0; i--) {
-          char c = sanitized.charAt(i);
-          if (!isalnum(c) && c != '-') {
-            sanitized.remove(i, 1);
-          }
-        }
-        if (sanitized.length() > 0) {
-          mdnsHostname = "Matrix-" + sanitized;
-        }
-      } else {
-        // No nickname - use MAC-based hostname for uniqueness
-        mdnsHostname = "Matrix-" + macID;
-      }
-      
-      if (!MDNS.begin(mdnsHostname.c_str())) {
+      // 🌐 Setup mDNS - ALL units use "Matrix" for simplicity
+      // Users identify which unit via portal (MAC ID, nickname, identify button)
+      if (!MDNS.begin("Matrix")) {
         Serial.println("❌ Error setting up mDNS responder!");
       } else {
-        Serial.printf("✅ mDNS responder started - Access at http://%s.local\n", mdnsHostname.c_str());
-        Serial.println("✅ Also accessible at http://Matrix.local (if first/only device)");
+        Serial.println("✅ mDNS responder started - Access at http://Matrix.local");
+        Serial.println("💡 TIP: Use the Identify button in portal to confirm which unit you're configuring");
         MDNS.addService("http", "tcp", 80);
       }
 
@@ -2155,11 +2135,17 @@ if (WiFi.status() == WL_CONNECTED) {
   else if ((now - lastBlock >= (BLOCK_INTERVAL + BLOCK_OFFSET)) && (now >= bootMs + BLOCK_OFFSET)) {
     esp_task_wdt_reset(); // Feed watchdog before network operations
     fetchBlockHeight();
+    esp_task_wdt_reset(); // Feed WDT after each API call to prevent timeout
     fetchMinerFromSatoNak();
+    esp_task_wdt_reset();
     fetchHashrateFromSatoNak();
+    esp_task_wdt_reset();
     fetchCircSupplyFromSatoNak();
+    esp_task_wdt_reset();
     fetchAthFromSatoNak();
+    esp_task_wdt_reset();
     fetchDaysSinceAthFromSatoNak();
+    esp_task_wdt_reset();
     fetchChange24hFromSatoNak();
     lastBlock = now;
     saveDisplayCache(); // Save after successful data updates
