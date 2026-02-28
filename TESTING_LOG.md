@@ -63,8 +63,8 @@ Mobile hotspot should remain stable, proving firmware WiFi code is functional.
 *To be filled Feb 27, 2026 morning*
 
 **Unit 1 (Hotspot):**
-- Start Time: _________
-- End Time: _________
+- Start Time: 00:46:50.409_________
+- End Time: 06:34:04.280_________
 - Status: _________
 - Crashes: _________
 - Notes: _________
