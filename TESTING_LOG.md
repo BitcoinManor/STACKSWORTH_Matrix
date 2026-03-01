@@ -61,6 +61,7 @@ Mobile hotspot should remain stable, proving firmware WiFi code is functional.
 
 ### Results
 *To be filled Feb 27, 2026 morning*
+Carried over to the 29th due to internet issues.
 
 **Unit 1 (Hotspot):**
 - Start Time: 00:46:50.409_________
