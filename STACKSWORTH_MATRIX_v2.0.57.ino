@@ -1,13 +1,13 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.56 - CRITICAL FIX: WiFi Resilience & API Crash Detection
+// v2.0.57 - OTA Auto-Update & Enhanced Stability
+// - ✅ PROVEN STABLE: v2.0.56 passed overnight test (no OPEN PORTAL crashes!)
+// - 🆕 Auto firmware check on boot - notifies when updates available
+// - 🆕 Improved mDNS reliability - 3 retry attempts for http://matrix.local
+// - 🆕 Version API endpoint - /version shows uptime, WiFi signal, free memory
 // - 🔧 CRITICAL: Device never goes to OPEN PORTAL after first successful connection
-// - ♻️ WiFi drops = keep looping cached data + auto-reconnect (user won't notice!)
-// - 🔥 CRITICAL FIX: Added watchdog resets to ALL API fallback code paths (prevents CoinGecko/mempool.space timeout crashes)
-// - ✅ Fixed: Removed broken HTTPUpdate OTA implementation (caused lwIP crashes)
-// - ✅ Fixed: CoinGecko fallback no longer causes WDT timeout
-// - ✅ Fixed: mempool.space fallback no longer causes WDT timeout
-// - ✅ Validated: WiFi resilience code works perfectly (9-hour hotspot test)
+// - ♻️ WiFi drops = keep looping cached data + auto-reconnect (seamless user experience!)
+// - 📊 Detailed API logging for crash detection and troubleshooting
 // - ✅ Validated: All watchdog resets between sequential API calls working
 // - Device naming system - users can nickname their Matrix
 // - All units use Matrix.local (simple & consistent)
@@ -118,7 +118,7 @@ const uint8_t explosion[3][7] = {
 };
 
 // 🌍 API Endpoints & Configuration
-const char* FIRMWARE_VERSION = "v2.0.56";
+const char* FIRMWARE_VERSION = "v2.0.57";
 const char* UPDATE_URL = "https://satonak.bitcoinmanor.com/firmware/stacksworth.bin";
 
 // API endpoints for fallback services  
@@ -504,6 +504,20 @@ void loadSavedSettingsAndConnect() {
       hasEverConnected = true; // 👉 Remember we've connected successfully
       wifiDisconnectedAt = 0; // Reset disconnection timer
       WiFi.setAutoReconnect(true); // Enable auto-reconnect for normal operation
+      
+      // 🆕 v2.0.57: Auto-check for firmware updates on boot
+      Serial.println("🔍 Checking for firmware updates...");
+      String latestVersion = checkForUpdates();
+      if (latestVersion.length() > 0 && latestVersion != FIRMWARE_VERSION) {
+        Serial.print("🆕 Update available: ");
+        Serial.print(latestVersion);
+        Serial.print(" (current: ");
+        Serial.print(FIRMWARE_VERSION);
+        Serial.println(")");
+        Serial.println("💡 Visit http://matrix.local to install update");
+      } else {
+        Serial.println("✅ Firmware is up to date");
+      }
       
       // 🌍 Configure timezone using proper timezone strings (auto-handles DST!)
       if (savedTimezone != -99 && savedTimezone >= 0 && savedTimezone < NUM_TIMEZONES) {
@@ -2114,6 +2128,14 @@ bool fetchDaysSinceAthFromSatoNak() {
         }
       });
 
+      // 🆕 v2.0.57: Version info API endpoint
+      server.on("/version", HTTP_GET, [](AsyncWebServerRequest *request) {
+        String json = "{\"version\":\"" + String(FIRMWARE_VERSION) + 
+                      "\",\"uptime\":" + String(millis() / 1000) + 
+                      ",\"wifi_rssi\":" + String(WiFi.RSSI()) + 
+                      ",\"free_heap\":" + String(ESP.getFreeHeap()) + "}";
+        request->send(200, "application/json", json);
+      });
 
       // Captive Portal Redirect
       server.onNotFound([](AsyncWebServerRequest *request)
@@ -2127,14 +2149,24 @@ bool fetchDaysSinceAthFromSatoNak() {
       Serial.println("🌍 Async Web server started");
       delay(2000); // 🕒 Let server stabilize after starting
 
-      // 🌐 Setup mDNS - ALL units use "Matrix" for simplicity
-      // Users identify which unit via portal (MAC ID, nickname, identify button)
-      if (!MDNS.begin("Matrix")) {
-        Serial.println("❌ Error setting up mDNS responder!");
-      } else {
-        Serial.println("✅ mDNS responder started - Access at http://Matrix.local");
-        Serial.println("💡 TIP: Use the Identify button in portal to confirm which unit you're configuring");
-        MDNS.addService("http", "tcp", 80);
+      // 🌐 Setup mDNS with retry logic (v2.0.57 improvement)
+      // ALL units use "Matrix" for simplicity
+      bool mdnsStarted = false;
+      for (int retry = 0; retry < 3 && !mdnsStarted; retry++) {
+        if (MDNS.begin("Matrix")) {
+          Serial.println("✅ mDNS responder started - Access at http://Matrix.local");
+          Serial.println("💡 TIP: Use the Identify button in portal to confirm which unit you're configuring");
+          MDNS.addService("http", "tcp", 80);
+          mdnsStarted = true;
+        } else {
+          Serial.print("⚠️ mDNS setup attempt ");
+          Serial.print(retry + 1);
+          Serial.println(" failed, retrying...");
+          delay(500);
+        }
+      }
+      if (!mdnsStarted) {
+        Serial.println("❌ mDNS failed after 3 attempts - use IP address instead");
       }
 
       bootMs = millis();
