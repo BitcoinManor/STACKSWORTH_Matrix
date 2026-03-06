@@ -1,5 +1,5 @@
 # ⚡ STACKSWORTH Matrix  
-**Open Source • Web Flashable • Bitcoin at a Glance**
+**Open Source • Web Flashable • Bitcoin Metrics Display • Bitcoin at a Glance**
 
 ![STACKSWORTH Banner](https://github.com/BitcoinManor/STACKSWORTH_Matrix/raw/main/assets/stacksworth_banner.png)
 
