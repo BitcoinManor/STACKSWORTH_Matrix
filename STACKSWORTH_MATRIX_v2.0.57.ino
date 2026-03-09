@@ -1711,7 +1711,7 @@ bool fetchDaysSinceAthFromSatoNak() {
         mx->clear();
         
         // Show "Fetching Data" on top zone during animation
-        P.displayZoneText(ZONE_UPPER, "Fetching Data", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
+        P.displayZoneText(ZONE_UPPER, "BOOTING", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
         P.displayReset(ZONE_UPPER);
         
         // Loop the animation 3 times for better boot experience
