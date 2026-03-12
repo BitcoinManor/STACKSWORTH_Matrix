@@ -98,19 +98,17 @@ static inline void feedWDT() {
 // ⛏️💥 BITCOIN MINER BOOT ANIMATION: Pickaxe mining Bitcoin!
 // Pickaxe swings forward to SHATTER Bitcoin symbols (no miner body - just the tool!)
 // 4-frame animation: pickaxe swing cycle (up → forward → down → strike)
-const uint8_t pacman[4][8] = {
-  // Frame 0: Pickaxe raised up (ready position)
-  { 0x00, 0x18, 0x3C, 0x7E, 0x3C, 0x18, 0x00, 0x00 },
-  // Frame 1: Pickaxe swinging forward
-  { 0x00, 0x00, 0x18, 0x3C, 0x7E, 0x3C, 0x18, 0x00 },
-  // Frame 2: Pickaxe coming down
-  { 0x00, 0x00, 0x00, 0x18, 0x3C, 0x7E, 0x3C, 0x18 },
-  // Frame 3: Pickaxe STRIKE! (⛏️💥 MINING!)
-  { 0x00, 0x00, 0x00, 0x00, 0x18, 0x3C, 0x7E, 0xFF },
+// 🎮 PACMAN BOOT ANIMATION: Bitcoin symbols being eaten by PacMan!
+// 4-frame animation with combined Bitcoin + PacMan sprite (18 bytes wide)
+const uint8_t pacman[4][18] = {
+  { 0xfe, 0x73, 0xfb, 0x7f, 0xf3, 0x7b, 0xfe, 0x00, 0x00, 0x00, 0x3c, 0x7e, 0x7e, 0xff, 0xe7, 0xc3, 0x81, 0x00 },
+  { 0xfe, 0x7b, 0xf3, 0x7f, 0xfb, 0x73, 0xfe, 0x00, 0x00, 0x00, 0x3c, 0x7e, 0xff, 0xff, 0xe7, 0xe7, 0x42, 0x00 },
+  { 0xfe, 0x73, 0xfb, 0x7f, 0xf3, 0x7b, 0xfe, 0x00, 0x00, 0x00, 0x3c, 0x7e, 0xff, 0xff, 0xff, 0xe7, 0x66, 0x24 },
+  { 0xfe, 0x7b, 0xf3, 0x7f, 0xf3, 0x7b, 0xfe, 0x00, 0x00, 0x00, 0x3c, 0x7e, 0xff, 0xff, 0xff, 0xff, 0x7e, 0x3c },
 };
 const uint8_t PACMAN_DATA_WIDTH = (sizeof(pacman[0])/sizeof(pacman[0][0]));
 
-// Explosion pattern when pickaxe hits
+// Removed explosion pattern - not needed for PacMan animation
 const uint8_t explosion[3][7] = {
   { 0x08, 0x14, 0x22, 0x41, 0x22, 0x14, 0x08 },  // Frame 0: small burst
   { 0x49, 0x2A, 0x14, 0x00, 0x14, 0x2A, 0x49 },  // Frame 1: expanding
@@ -1742,10 +1740,12 @@ bool fetchDaysSinceAthFromSatoNak() {
         P.displayZoneText(ZONE_UPPER, "BOOTING", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
         P.displayReset(ZONE_UPPER);
         
-        // Draw Bitcoin symbols across the bottom zone for PacMan to eat
+        // Loop the animation 3 times for better boot experience
+        for (uint8_t animLoop = 0; animLoop < 3; animLoop++) {
+        
+        // Lay out Bitcoin symbols across the entire bottom zone
         for (uint8_t i = 0; i < MAX_DEVICES; i++) {
           int baseCol = i * 8;
-          // Bitcoin B symbol (simplified for 8x8)
           mx->setPoint(0, baseCol + 4, true);
           mx->setPoint(0, baseCol + 2, true);
           mx->setPoint(1, baseCol + 5, true);
@@ -1770,54 +1770,58 @@ bool fetchDaysSinceAthFromSatoNak() {
         
         mx->control(MD_MAX72XX::UPDATE, MD_MAX72XX::ON);
         
-        // Animate PacMan chomping across the display
-        int16_t pacmanIdx = -PACMAN_DATA_WIDTH;
-        uint8_t pacmanFrame = 0;
+        // Animate PacMan eating across the display
+        int16_t pacIdx = -PACMAN_DATA_WIDTH;
+        uint8_t pacFrame = 0;
+        int8_t pacDeltaFrame = 1;
         unsigned long lastFrame = millis();
         
-        while (pacmanIdx < mx->getColumnCount() + PACMAN_DATA_WIDTH) {
-          // 80ms per frame for smooth chomping action
-          if (millis() - lastFrame >= 80) {
+        while (pacIdx < mx->getColumnCount() + PACMAN_DATA_WIDTH) {
+          // 75ms per frame for smooth animation
+          if (millis() - lastFrame >= 75) {
             lastFrame = millis();
             
             mx->control(MD_MAX72XX::UPDATE, MD_MAX72XX::OFF);
             
             // Clear old PacMan position
             for (uint8_t i = 0; i < PACMAN_DATA_WIDTH; i++) {
-              int16_t col = pacmanIdx - PACMAN_DATA_WIDTH + i;
+              int16_t col = pacIdx - PACMAN_DATA_WIDTH + i;
               if (col >= 0 && col < mx->getColumnCount()) {
                 mx->setColumn(col, 0);
               }
             }
             
-            // Draw PacMan at new position with current chomping frame
+            // Draw PacMan at new position
+            pacIdx++;
             for (uint8_t i = 0; i < PACMAN_DATA_WIDTH; i++) {
-              int16_t col = pacmanIdx + i;
+              int16_t col = pacIdx - PACMAN_DATA_WIDTH + i;
               if (col >= 0 && col < mx->getColumnCount()) {
-                mx->setColumn(col, pacman[pacmanFrame][i]);
+                mx->setColumn(col, pacman[pacFrame][i]);
               }
             }
             
-            // Cycle through PacMan frames (0-3) for chomping animation
-            pacmanFrame = (pacmanFrame + 1) % 4;
-            pacmanIdx += 2; // Move PacMan 2 pixels per frame
+            // Advance animation frame (creates chomping effect)
+            pacFrame += pacDeltaFrame;
+            if (pacFrame == 0 || pacFrame == 3)
+              pacDeltaFrame = -pacDeltaFrame;
             
             mx->control(MD_MAX72XX::UPDATE, MD_MAX72XX::ON);
             
-            // Keep top zone \"BOOTING\" text visible
+            // Keep top zone text animating
             P.displayAnimate();
           }
           
-          esp_task_wdt_reset(); // Feed watchdog during animation
-          delay(10);
+          delay(10);  // Small delay to not hog CPU
         }
+        
+        } // End animation loop (3x)
         
         // Clear display after animation
         mx->clear();
         P.displayClear();
       }
       
-      Serial.println("✅ PacMan animation complete - Ready to boot!");
+      Serial.println("✅ 🎮 PacMan boot animation complete - LEGENDARY!");
       
       // 🐕 Initialize watchdog timer EARLY to prevent crashes during setup
       Serial.println("🐕 Initializing Watchdog Timer...");
