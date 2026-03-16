@@ -8,7 +8,7 @@ Watch Bitcoin's Pulse at a Glance in real time  — price, block height, mempool
 that’s built for Bitcoiners, by Bitcoiners.
 ****WORKING TO PROVIDE OTA ABILITIES TO MAKE THINGS EASIER FOR THE USER, Coming MARCH 2026---
 
-## 🚀 Latest Firmware: v1.0.2
+## 🚀 Latest Firmware: v2.0.58
 
 🆕 MAC-based AP ID (e.g. `SW-MATRIX-E4E204`)  
 🌐 Matching ID in hotspot, HTML portal, and network list  
