@@ -1,12 +1,12 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.61 - FAST BOOT FIX: Immediate WiFi message + Quick data load + Stable operation
-// - 🚀 FIXED: WiFi Connected shows IMMEDIATELY after animation (no blank screen!)
-// - ⚡ OPTIMIZED: Fast boot - loads only Block/Price/Time initially (~2-3 seconds)
-// - 🔄 IMPROVED: Other metrics populate lazily in background (no watchdog timeouts)
-// - 🎯 DEFAULT: 7 core metrics (Block, Miner, Price, Fee, Time/City, Date, Custom)
+// v2.0.62 - SMART BOOT: Fetches only enabled metrics for optimal speed
+// - 🧠 INTELLIGENT: Boot fetch adapts to user's display configuration
+// - 🔥 FIXED: Fee Rate no longer stuck on "Checking..." (loads immediately if enabled)
+// - ⚡ OPTIMIZED: Only fetches data for metrics user actually enabled
+// - 🎯 ADAPTIVE: Boot time varies based on enabled metrics (faster if fewer enabled)
+// - 🚀 FAST: Default 7 metrics = ~3-5 seconds boot time
 // - ✅ STABLE: OTA infrastructure ready, emergency shutdown working
-// - 💾 MEMORY: Optimized flash usage for production stability
 // - 🚨 CRITICAL FIX: Emergency MAX7219 shutdown executes FIRST (prevents LED burn-out)
 // - 🚨 VERIFIED: Shutdown executes <1ms after power-on
 // - 🔧 IMPROVED: WiFi fallback timeout 6 hours (stable long-term operation)
@@ -119,7 +119,7 @@ const uint8_t explosion[3][7] = {
 };
 
 // 🌍 API Endpoints & Configuration
-const char* FIRMWARE_VERSION = "v2.0.61";
+const char* FIRMWARE_VERSION = "v2.0.62";
 const char* UPDATE_URL = "https://satonak.bitcoinmanor.com/firmware/stacksworth.bin";
 
 // API endpoints for fallback services  
@@ -2467,28 +2467,71 @@ bool fetchDaysSinceAthFromSatoNak() {
       esp_task_wdt_reset();           // Reset watchdog
       dnsServer.processNextRequest(); // Handle captive portal DNS magic
 
-      // 🚀 INITIAL FETCH - Run once on first loop iteration (CRITICAL data only for fast boot)
-      // ⚠️ OPTIMIZED: Only fetch Block, Price, Time initially - other metrics load lazily
+      // 🚀 INITIAL FETCH - Run once on first loop iteration
+      // 🎯 SMART: Only fetches data for metrics that are actually ENABLED by user
+      // ⚡ FAST BOOT: Skips disabled metrics, optimizes boot time for user's config
       if (wifiConnected && !initialFetchDone && !apMode) {
-        Serial.println("🌍 Fetching critical initial data (Block, Price, Time only - fast boot)...");
+        Serial.println("🌍 Smart boot: Fetching only ENABLED metrics...");
         
         unsigned long now = millis();
+        int fetchCount = 0;
         
-        // Fetch only CRITICAL data that users want to see immediately
-        Serial.println("🔍 [1/3] Fetching Block Height..."); esp_task_wdt_reset(); fetchHeightFromSatoNak(); lastBlockHeightFetch = now;
-        Serial.println("✅ [1/3] Block Height complete");
-        delay(200);
+        // Check which metrics are enabled and fetch only those
+        if (displayEnabled[0]) { // Block Height
+          Serial.printf("🔍 [%d] Fetching Block Height...\n", ++fetchCount); 
+          esp_task_wdt_reset(); 
+          fetchHeightFromSatoNak(); 
+          lastBlockHeightFetch = now;
+          Serial.printf("✅ [%d] Block Height complete\n", fetchCount);
+          delay(200);
+        }
         
-        Serial.println("🔍 [2/3] Fetching Price..."); esp_task_wdt_reset(); fetchPriceFromSatoNak(); lastPriceFetch = now;
-        Serial.println("✅ [2/3] Price complete");
-        delay(200);
+        if (displayEnabled[1]) { // Miner
+          Serial.printf("🔍 [%d] Fetching Miner...\n", ++fetchCount); 
+          esp_task_wdt_reset(); 
+          fetchMinerFromSatoNak();
+          Serial.printf("✅ [%d] Miner complete\n", fetchCount);
+          delay(200);
+        }
         
-        Serial.println("🔍 [3/3] Fetching Time..."); esp_task_wdt_reset(); fetchTime();
-        Serial.println("✅ [3/3] Time complete");
-        delay(100);
+        if (displayEnabled[3]) { // Price (also needed for Sats/Currency calc)
+          Serial.printf("🔍 [%d] Fetching Price...\n", ++fetchCount); 
+          esp_task_wdt_reset(); 
+          fetchPriceFromSatoNak(); 
+          lastPriceFetch = now;
+          Serial.printf("✅ [%d] Price complete\n", fetchCount);
+          delay(200);
+        }
+        
+        if (displayEnabled[8]) { // Fee Rate
+          Serial.printf("🔍 [%d] Fetching Fee Rate...\n", ++fetchCount); 
+          esp_task_wdt_reset(); 
+          fetchFeeRate(); 
+          lastFee = now;
+          Serial.printf("✅ [%d] Fee Rate complete\n", fetchCount);
+          delay(200);
+        }
+        
+        // Time is ALWAYS fetched (needed for Time/City, Day/Date, Moscow Time displays)
+        if (displayEnabled[10] || displayEnabled[11] || displayEnabled[13]) {
+          Serial.printf("🔍 [%d] Fetching Time...\n", ++fetchCount); 
+          esp_task_wdt_reset(); 
+          fetchTime();
+          Serial.printf("✅ [%d] Time complete\n", fetchCount);
+          delay(100);
+        }
+        
+        if (displayEnabled[12]) { // Weather
+          Serial.printf("🔍 [%d] Fetching Weather...\n", ++fetchCount); 
+          esp_task_wdt_reset(); 
+          fetchWeather(); 
+          lastWeather = now;
+          Serial.printf("✅ [%d] Weather complete\n", fetchCount);
+          delay(200);
+        }
 
         lastFetchTime = millis();
-        Serial.println("✅ Critical data loaded! Other metrics will populate in background.");
+        Serial.printf("✅ Smart boot complete! Fetched %d enabled metrics. Others load in background.\n", fetchCount);
         saveDisplayCache();
         
         // Clear "LOADING DATA" message - displays will start immediately
