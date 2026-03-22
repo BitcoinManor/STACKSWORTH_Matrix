@@ -1,6 +1,11 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.63 - PRODUCTION STABILITY FIXES (Critical pre-shipment patch)
+// v2.0.64 - CRITICAL SETTINGS BUG FIX (Shipment Day Hotfix)
+// - 🚨 CRITICAL FIX: Removed WDT reset from showRebootMessages() - was crashing AsyncWebServer callbacks
+// - 🐛 ROOT CAUSE: Watchdog registered to setup task, but save endpoint runs in AsyncServer task context
+// - ✅ RESULT: Settings now save correctly, ESP reboots properly, WiFi credentials persist
+// - 📦 REGRESSION FIX: Restores v2.0.62 settings functionality broken in v2.0.63
+// Previous v2.0.63 fixes (all preserved):
 // - 🚨 CRITICAL FIX: Watchdog initialized BEFORE animation (no more "task not found" spam)
 // - ⏱️ BLOCK FIX: Height checks every 2 min (was 5 min - prevents stale block display)
 // - 💾 SPIFFS FIX: Auto-format on mount failure (prevents all-LEDs-on crash)
@@ -118,7 +123,7 @@ const uint8_t explosion[3][7] = {
 };
 
 // 🌍 API Endpoints & Configuration
-const char* FIRMWARE_VERSION = "v2.0.63";
+const char* FIRMWARE_VERSION = "v2.0.64";
 const char* UPDATE_URL = "https://satonak.bitcoinmanor.com/firmware/stacksworth.bin";
 
 // API endpoints for fallback services  
@@ -1747,7 +1752,7 @@ bool fetchDaysSinceAthFromSatoNak() {
       unsigned long start = millis();
       while (millis() - start < 2000)
       {
-        esp_task_wdt_reset();
+        // No WDT reset needed - this task isn't registered with watchdog
         P.displayAnimate();
         delay(10);
       }
@@ -1761,7 +1766,7 @@ bool fetchDaysSinceAthFromSatoNak() {
       start = millis();
       while (millis() - start < 2000)
       {
-        esp_task_wdt_reset();
+        // No WDT reset needed - this task isn't registered with watchdog
         P.displayAnimate();
         delay(10);
       }
