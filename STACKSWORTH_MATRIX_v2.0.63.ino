@@ -1,12 +1,11 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.62 - SMART BOOT: Fetches only enabled metrics for optimal speed
-// - 🧠 INTELLIGENT: Boot fetch adapts to user's display configuration
-// - 🔥 FIXED: Fee Rate no longer stuck on "Checking..." (loads immediately if enabled)
-// - ⚡ OPTIMIZED: Only fetches data for metrics user actually enabled
-// - 🎯 ADAPTIVE: Boot time varies based on enabled metrics (faster if fewer enabled)
-// - 🚀 FAST: Default 7 metrics = ~3-5 seconds boot time
-// - ✅ STABLE: OTA infrastructure ready, emergency shutdown working
+// v2.0.63 - PRODUCTION STABILITY FIXES (Critical pre-shipment patch)
+// - 🚨 CRITICAL FIX: Watchdog initialized BEFORE animation (no more "task not found" spam)
+// - ⏱️ BLOCK FIX: Height checks every 2 min (was 5 min - prevents stale block display)
+// - 💾 SPIFFS FIX: Auto-format on mount failure (prevents all-LEDs-on crash)
+// - 🧠 SMART BOOT: Fetches only enabled metrics for optimal speed
+// - ✅ TESTED: 4 units, multi-day stability testing complete
 // - 🚨 CRITICAL FIX: Emergency MAX7219 shutdown executes FIRST (prevents LED burn-out)
 // - 🚨 VERIFIED: Shutdown executes <1ms after power-on
 // - 🔧 IMPROVED: WiFi fallback timeout 6 hours (stable long-term operation)
@@ -119,7 +118,7 @@ const uint8_t explosion[3][7] = {
 };
 
 // 🌍 API Endpoints & Configuration
-const char* FIRMWARE_VERSION = "v2.0.62";
+const char* FIRMWARE_VERSION = "v2.0.63";
 const char* UPDATE_URL = "https://satonak.bitcoinmanor.com/firmware/stacksworth.bin";
 
 // API endpoints for fallback services  
@@ -390,7 +389,7 @@ const unsigned long MEMORY_CHECK_INTERVAL = 5UL * 60UL * 1000UL;    // 5 minutes
 
 const uint32_t BTC_INTERVAL     = 300000;   // 5 min
 const uint32_t FEE_INTERVAL     = 300000;   // 5 min
-const uint32_t BLOCK_INTERVAL   = 300000;   // 5 min
+const uint32_t BLOCK_INTERVAL   = 120000;   // 2 min (blocks vary 1-20 min)
 const uint32_t WEATHER_INTERVAL = 1800000;  // 30 min
 
 const uint32_t FEE_OFFSET     =  90000;   // +1.5 min after BTC
@@ -1812,6 +1811,17 @@ bool fetchDaysSinceAthFromSatoNak() {
       Serial.println("🛡️ SAFETY: LED burnout prevented - chips in safe shutdown state");
       Serial.println("🚀 Starting normal initialization sequence...");
       
+      // 🐕 Initialize watchdog timer FIRST (before animation that calls feedWDT)
+      Serial.println("🐕 Initializing Watchdog Timer...");
+      esp_task_wdt_config_t wdt_config = {
+          .timeout_ms = 12000,                             // 12 seconds
+          .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // All cores
+          .trigger_panic = true                            // Reset if not fed in time
+      };
+      esp_task_wdt_init(&wdt_config);
+      esp_task_wdt_add(NULL); // Add current task to WDT
+      Serial.println("✅ Watchdog Timer initialized");
+      
       // Now initialize P with proper library functions (chips already in safe state)
       P.begin(MAX_ZONES);
       delay(50); // Give MAX7219 chips time to initialize properly
@@ -2065,16 +2075,7 @@ bool fetchDaysSinceAthFromSatoNak() {
         startAccessPoint();
       }
       
-      // 🐕 Initialize watchdog timer EARLY to prevent crashes during setup
-      Serial.println("🐕 Initializing Watchdog Timer...");
-      esp_task_wdt_config_t wdt_config = {
-          .timeout_ms = 12000,                             // 12 seconds
-          .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // All cores
-          .trigger_panic = true                            // Reset if not fed in time
-      };
-      esp_task_wdt_init(&wdt_config);
-      esp_task_wdt_add(NULL); // Add current task to WDT
-      Serial.println("✅ Watchdog Timer initialized");
+      // 🐕 Watchdog already initialized early before animation - skip duplicate init
       
       Serial.println("🚀 Starting STACKSWORTH Matrix Setup...");
 
@@ -2093,14 +2094,25 @@ bool fetchDaysSinceAthFromSatoNak() {
       Serial.printf("Minimum free heap: %d bytes\n", ESP.getMinFreeHeap());
       Serial.printf("Free PSRAM: %d bytes\n", ESP.getFreePsram());
 
-      // 🗂️ Mount SPIFFS
+      // 🗂️ Mount SPIFFS with auto-format on failure
       Serial.println("🗂️ Mounting SPIFFS...");
       if (!SPIFFS.begin(true))
       {
-        Serial.println("❌ Failed to mount SPIFFS");
-        return;
+        Serial.println("❌ SPIFFS mount failed - attempting manual format...");
+        SPIFFS.format();
+        delay(1000);
+        if (!SPIFFS.begin(true)) {
+          Serial.println("❌ Critical: SPIFFS still failed after format!");
+          Serial.println("⚠️ Portal will run without HTML file (basic mode)");
+          // Don't return - continue without SPIFFS for basic functionality
+        } else {
+          Serial.println("✅ SPIFFS formatted and mounted successfully!");
+        }
       }
-      Serial.println("✅ SPIFFS mounted successfully!");
+      else
+      {
+        Serial.println("✅ SPIFFS mounted successfully!");
+      }
 
       if (!SPIFFS.exists("/STACKS_Wifi_Portal.html.gz"))
       {
@@ -2482,6 +2494,7 @@ bool fetchDaysSinceAthFromSatoNak() {
           esp_task_wdt_reset(); 
           fetchHeightFromSatoNak(); 
           lastBlockHeightFetch = now;
+          lastBlock = now; // ⚡ Set periodic scheduler timer so it knows Block was fetched
           Serial.printf("✅ [%d] Block Height complete\n", fetchCount);
           delay(200);
         }
@@ -2499,6 +2512,7 @@ bool fetchDaysSinceAthFromSatoNak() {
           esp_task_wdt_reset(); 
           fetchPriceFromSatoNak(); 
           lastPriceFetch = now;
+          lastBTC = now; // ⚡ Set periodic scheduler timer so it knows Price was fetched
           Serial.printf("✅ [%d] Price complete\n", fetchCount);
           delay(200);
         }
@@ -2710,15 +2724,15 @@ if (WiFi.status() == WL_CONNECTED) {
     saveDisplayCache(); // Save after successful price update
     esp_task_wdt_reset(); // Feed watchdog after network operations
   }
-  // 2) Fee at +offset
-  else if ((now - lastFee >= (FEE_INTERVAL + FEE_OFFSET)) && (now >= bootMs + FEE_OFFSET)) {
+  // 2) Fee every FEE_INTERVAL (offset removed - smart boot handles initial stagger)
+  else if (now - lastFee >= FEE_INTERVAL) {
     esp_task_wdt_reset(); // Feed watchdog before network operations
     fetchFeeRate();
     lastFee = now;
     esp_task_wdt_reset(); // Feed watchdog after network operations
   }
-  // 3) Block height at +offset
-  else if ((now - lastBlock >= (BLOCK_INTERVAL + BLOCK_OFFSET)) && (now >= bootMs + BLOCK_OFFSET)) {
+  // 3) Block height every BLOCK_INTERVAL (offset removed - smart boot handles initial stagger)
+  else if (now - lastBlock >= BLOCK_INTERVAL) {
     Serial.println("🔄 Starting periodic data refresh cycle...");
     Serial.println("🔍 [REFRESH-1/7] Fetching Block Height..."); esp_task_wdt_reset(); // Feed watchdog before network operations
     fetchBlockHeight();
@@ -2746,8 +2760,8 @@ if (WiFi.status() == WL_CONNECTED) {
     saveDisplayCache(); // Save after successful data updates
     esp_task_wdt_reset(); // Feed watchdog after network operations
   }
-  // 4) Weather seldom, with a small offset
-  else if ((now - lastWeather >= (WEATHER_INTERVAL + WEATHER_OFFSET)) && (now >= bootMs + WEATHER_OFFSET)) {
+  // 4) Weather every WEATHER_INTERVAL (offset removed - smart boot handles initial stagger)
+  else if (now - lastWeather >= WEATHER_INTERVAL) {
     esp_task_wdt_reset(); // Feed watchdog before network operations
     fetchWeather();
     lastWeather = now;
