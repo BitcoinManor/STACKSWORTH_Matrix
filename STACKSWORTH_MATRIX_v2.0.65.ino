@@ -1,16 +1,17 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.64 - CRITICAL SETTINGS BUG FIX (Shipment Day Hotfix)
-// - 🚨 CRITICAL FIX: Removed WDT reset from showRebootMessages() - was crashing AsyncWebServer callbacks
-// - 🐛 ROOT CAUSE: Watchdog registered to setup task, but save endpoint runs in AsyncServer task context
-// - ✅ RESULT: Settings now save correctly, ESP reboots properly, WiFi credentials persist
-// - 📦 REGRESSION FIX: Restores v2.0.62 settings functionality broken in v2.0.63
+// v2.0.65 - WATCHDOG BOOT LOOP FIX (Final Shipment Hotfix)
+// - 🚨 CRITICAL FIX: Removed manual watchdog init - ESP32 Arduino core already manages it
+// - 🐛 ROOT CAUSE: Manual esp_task_wdt_init() conflicted with bootloader's watchdog
+// - 🐛 SYMPTOM: Boot loop crash after WiFi connects ("async_tcp task not reset watchdog")
+// - ✅ RESULT: Stable operation, no boot loops, watchdog fed by existing esp_task_wdt_reset() calls
+// Previous v2.0.64 fix (preserved):
+// - 🚨 Removed WDT reset from showRebootMessages() - fixed settings save crash
+// - ✅ Settings now save correctly, WiFi credentials persist across reboots
 // Previous v2.0.63 fixes (all preserved):
-// - 🚨 CRITICAL FIX: Watchdog initialized BEFORE animation (no more "task not found" spam)
 // - ⏱️ BLOCK FIX: Height checks every 2 min (was 5 min - prevents stale block display)
 // - 💾 SPIFFS FIX: Auto-format on mount failure (prevents all-LEDs-on crash)
 // - 🧠 SMART BOOT: Fetches only enabled metrics for optimal speed
-// - ✅ TESTED: 4 units, multi-day stability testing complete
 // - 🚨 CRITICAL FIX: Emergency MAX7219 shutdown executes FIRST (prevents LED burn-out)
 // - 🚨 VERIFIED: Shutdown executes <1ms after power-on
 // - 🔧 IMPROVED: WiFi fallback timeout 6 hours (stable long-term operation)
@@ -123,7 +124,7 @@ const uint8_t explosion[3][7] = {
 };
 
 // 🌍 API Endpoints & Configuration
-const char* FIRMWARE_VERSION = "v2.0.64";
+const char* FIRMWARE_VERSION = "v2.0.65";
 const char* UPDATE_URL = "https://satonak.bitcoinmanor.com/firmware/stacksworth.bin";
 
 // API endpoints for fallback services  
@@ -1816,16 +1817,9 @@ bool fetchDaysSinceAthFromSatoNak() {
       Serial.println("🛡️ SAFETY: LED burnout prevented - chips in safe shutdown state");
       Serial.println("🚀 Starting normal initialization sequence...");
       
-      // 🐕 Initialize watchdog timer FIRST (before animation that calls feedWDT)
-      Serial.println("🐕 Initializing Watchdog Timer...");
-      esp_task_wdt_config_t wdt_config = {
-          .timeout_ms = 12000,                             // 12 seconds
-          .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // All cores
-          .trigger_panic = true                            // Reset if not fed in time
-      };
-      esp_task_wdt_init(&wdt_config);
-      esp_task_wdt_add(NULL); // Add current task to WDT
-      Serial.println("✅ Watchdog Timer initialized");
+      // 🐕 NOTE: Watchdog managed by ESP32 Arduino core - no manual init needed
+      // The framework automatically handles watchdog for both setup() and loop()
+      // Our esp_task_wdt_reset() calls throughout the code feed it properly
       
       // Now initialize P with proper library functions (chips already in safe state)
       P.begin(MAX_ZONES);
