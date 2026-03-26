@@ -1,25 +1,23 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.65 - WATCHDOG BOOT LOOP FIX (Final Shipment Hotfix)
-// - 🚨 CRITICAL FIX: Removed manual watchdog init - ESP32 Arduino core already manages it
-// - 🐛 ROOT CAUSE: Manual esp_task_wdt_init() conflicted with bootloader's watchdog
-// - 🐛 SYMPTOM: Boot loop crash after WiFi connects ("async_tcp task not reset watchdog")
-// - ✅ RESULT: Stable operation, no boot loops, watchdog fed by existing esp_task_wdt_reset() calls
+// v2.0.66 - PRODUCTION SHIPMENT FIX (All Critical Stability Issues Resolved)
+// - 🚨 DISABLED LOW-HEAP REBOOT: Changed from restart to warning (prevents boot loops)
+// - 🚨 REMOVED WDT FROM CALLBACKS: Fixed "task not found" by removing esp_task_wdt_reset() from AsyncWebServer handlers
+// - 🚀 REMOVED BOOT AUTO-UPDATE: No automatic update checks, manual-only via portal button
+// - 🌐 MDNS WIFI GUARD: Only start mDNS when WiFi actually connected (prevents AP mode issues)
+// - 🔄 FIXED RECONNECT: Replaced modulo logic with proper timestamp-based retry
+// - 🛡️ SAFETY CHECKS: Added city/weather/brightness validation before use/save
+// - 🌍 LAT/LON BEFORE WEATHER: Ensures coordinates fetched before first weather call
+// Previous v2.0.65 fix (preserved):
+// - ✅ Removed manual watchdog init - ESP32 Arduino core manages it automatically
 // Previous v2.0.64 fix (preserved):
-// - 🚨 Removed WDT reset from showRebootMessages() - fixed settings save crash
-// - ✅ Settings now save correctly, WiFi credentials persist across reboots
+// - ✅ Removed WDT reset from showRebootMessages() - fixed settings save crash
 // Previous v2.0.63 fixes (all preserved):
-// - ⏱️ BLOCK FIX: Height checks every 2 min (was 5 min - prevents stale block display)
-// - 💾 SPIFFS FIX: Auto-format on mount failure (prevents all-LEDs-on crash)
-// - 🧠 SMART BOOT: Fetches only enabled metrics for optimal speed
-// - 🚨 CRITICAL FIX: Emergency MAX7219 shutdown executes FIRST (prevents LED burn-out)
-// - 🚨 VERIFIED: Shutdown executes <1ms after power-on
-// - 🔧 IMPROVED: WiFi fallback timeout 6 hours (stable long-term operation)
-// - ✅ STABLE: All v2.0.59 safety features preserved
-// - Device naming system - users can nickname their Matrix
-// - All units use Matrix.local (simple & consistent)
-// - Identify endpoint - click button to flash display and confirm which unit
-// - Device ID displayed on portal for multi-unit identification
+// - ⏱️ BLOCK FIX: Height checks every 2 min (prevents stale block display)
+// - 💾 SPIFFS FIX: Auto-format on mount failure
+// - 🧠 SMART BOOT: Fetches only enabled metrics
+// - 🚨 Emergency MAX7219 shutdown executes FIRST
+// - Device naming, mDNS, OTA, all portal features preserved
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
@@ -124,7 +122,7 @@ const uint8_t explosion[3][7] = {
 };
 
 // 🌍 API Endpoints & Configuration
-const char* FIRMWARE_VERSION = "v2.0.65";
+const char* FIRMWARE_VERSION = "v2.0.66";
 const char* UPDATE_URL = "https://satonak.bitcoinmanor.com/firmware/stacksworth.bin";
 
 // API endpoints for fallback services  
@@ -511,19 +509,9 @@ void loadSavedSettingsAndConnect() {
       wifiDisconnectedAt = 0; // Reset disconnection timer
       WiFi.setAutoReconnect(true); // Enable auto-reconnect for normal operation
       
-      // 🆕 v2.0.57: Auto-check for firmware updates on boot
-      Serial.println("🔍 Checking for firmware updates...");
-      String latestVersion = checkForUpdates();
-      if (latestVersion.length() > 0 && latestVersion != FIRMWARE_VERSION) {
-        Serial.print("🆕 Update available: ");
-        Serial.print(latestVersion);
-        Serial.print(" (current: ");
-        Serial.print(FIRMWARE_VERSION);
-        Serial.println(")");
-        Serial.println("💡 Visit http://matrix.local to install update");
-      } else {
-        Serial.println("✅ Firmware is up to date");
-      }
+      // 🔄 v2.0.66: Removed boot-time auto update check
+      // Updates are now manual-only via portal button for cleaner boot and reduced network dependency
+      Serial.println("💡 OTA updates available at http://matrix.local (manual updates only)");
       
       // 🌍 Configure timezone using proper timezone strings (auto-handles DST!)
       if (savedTimezone != -99 && savedTimezone >= 0 && savedTimezone < NUM_TIMEZONES) {
@@ -2237,7 +2225,12 @@ bool fetchDaysSinceAthFromSatoNak() {
     prefs.putString("bottomtext", bottomtext);                      // 📝 Store custom bottom text
     prefs.putString("tempunit", tempunit);                          // 🌡️ Store temperature unit
     prefs.putString("devicename", devicename);                      // 🆔 Store device nickname
-    prefs.putUChar("brightness", brightness.toInt());              // 💡 Store brightness
+    
+    // 💡 Clamp brightness before saving (safety check)
+    uint8_t brightnessVal = brightness.toInt();
+    if (brightnessVal < 1) brightnessVal = 1;
+    if (brightnessVal > 15) brightnessVal = 15;
+    prefs.putUChar("brightness", brightnessVal);                   // 💡 Store brightness (validated)
     
     // 📊 Store display options (show0-show14)
     for (int i = 0; i < 15; i++) {
@@ -2308,11 +2301,11 @@ bool fetchDaysSinceAthFromSatoNak() {
         P.synchZoneStart();
         
         // Wait for animation to complete
+        // NOTE: No esp_task_wdt_reset() here - this runs in AsyncWebServer task context, not registered with WDT
         unsigned long startTime = millis();
         while (millis() - startTime < 5000) {
           P.displayAnimate();
-          esp_task_wdt_reset();
-          delay(10);
+          delay(10); // yield() happens in delay
         }
         
         request->send(200, "text/plain", "Device identified!");
@@ -2398,21 +2391,25 @@ bool fetchDaysSinceAthFromSatoNak() {
       Serial.println("🌍 Async Web server started");
       delay(2000); // 🕒 Let server stabilize after starting
 
-      // 🌐 Setup mDNS with retry logic (v2.0.57 improvement)
+      // 🌐 Setup mDNS with retry logic - ONLY when WiFi is connected in STA mode
       // ALL units use "Matrix" for simplicity
-      bool mdnsStarted = false;
-      for (int retry = 0; retry < 3 && !mdnsStarted; retry++) {
-        if (MDNS.begin("Matrix")) {
-          Serial.println("✅ mDNS responder started - Access at http://Matrix.local");
-          Serial.println("💡 TIP: Use the Identify button in portal to confirm which unit you're configuring");
-          MDNS.addService("http", "tcp", 80);
-          mdnsStarted = true;
-        } else {
-          Serial.print("⚠️ mDNS setup attempt ");
-          Serial.print(retry + 1);
-          Serial.println(" failed, retrying...");
-          delay(500);
+      if (wifiConnected && WiFi.status() == WL_CONNECTED) {
+        bool mdnsStarted = false;
+        for (int retry = 0; retry < 3 && !mdnsStarted; retry++) {
+          if (MDNS.begin("Matrix")) {
+            Serial.println("✅ mDNS responder started - Access at http://Matrix.local");
+            Serial.println("💡 TIP: Use the Identify button in portal to confirm which unit you're configuring");
+            MDNS.addService("http", "tcp", 80);
+            mdnsStarted = true;
+          } else {
+            Serial.print("⚠️ mDNS setup attempt ");
+            Serial.print(retry + 1);
+            Serial.println(" failed, retrying...");
+            delay(500);
+          }
         }
+      } else {
+        Serial.println("⚠️ Skipping mDNS - WiFi not connected (will be available in AP mode via IP)");
       }
       if (!mdnsStarted) {
         Serial.println("❌ mDNS failed after 3 attempts - use IP address instead");
@@ -2536,7 +2533,13 @@ bool fetchDaysSinceAthFromSatoNak() {
         
         if (displayEnabled[12]) { // Weather
           Serial.printf("🔍 [%d] Fetching Weather...\n", ++fetchCount); 
-          esp_task_wdt_reset(); 
+          esp_task_wdt_reset();
+          // 🌍 Ensure lat/lon exist before fetching weather
+          if (latitude == 0.0 && longitude == 0.0 && savedCity.length() > 0) {
+            Serial.println("📍 Fetching lat/lon before weather...");
+            fetchLatLonFromCity();
+            delay(200);
+          }
           fetchWeather(); 
           lastWeather = now;
           Serial.printf("✅ [%d] Weather complete\n", fetchCount);
@@ -2613,10 +2616,12 @@ bool fetchDaysSinceAthFromSatoNak() {
             return; // Exit to AP mode
           }
           
-          // Try reconnecting (non-blocking)
-          if (now % 10000 < 100) {  // Attempt every 10 seconds
+          // Try reconnecting (non-blocking) with proper timestamp tracking
+          static unsigned long lastReconnectAttempt = 0;
+          if (now - lastReconnectAttempt >= 10000) {  // Attempt every 10 seconds
             Serial.println("🔄 Retrying WiFi connection...");
             WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
+            lastReconnectAttempt = now;
           }
           
         } else if (reconnecting) {
@@ -2695,12 +2700,12 @@ Serial.println(bottomLine);
         lastMemoryCheck = currentMillis;
       }
 
-      // 🚨 Auto-reboot if heap drops too low
+      // 🚨 v2.0.66: Changed from auto-reboot to warning-only (prevents surprise boot loops)
+      // For shipped units, cached data & degraded operation >>> unexpected restarts
       if (ESP.getFreeHeap() < 140000)
       {
-        Serial.println("🚨 CRITICAL: Free heap dangerously low. Rebooting to recover...");
-        delay(1000); // Give time for message to print
-        ESP.restart();
+        Serial.printf("⚠️ LOW HEAP WARNING: %d bytes (threshold: 140000)\n", ESP.getFreeHeap());
+        // No restart - let unit continue with cached data
       }
 
       // ⏰ Fetch Time every 1 minute
@@ -2910,7 +2915,9 @@ if (WiFi.status() == WL_CONNECTED) {
         getThemeEffects(effectIn, effectOut);
         Serial.println("🖥️ Displaying TIME and City screen...");
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "TIME", timeText);
-        P.displayZoneText(ZONE_UPPER, savedCity.c_str(), PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
+        // Safety: Show "LOCAL TIME" if city is empty
+        const char* cityDisplay = (savedCity.length() > 0) ? savedCity.c_str() : "LOCAL TIME";
+        P.displayZoneText(ZONE_UPPER, cityDisplay, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayZoneText(ZONE_LOWER, timeText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
@@ -2949,7 +2956,10 @@ if (WiFi.status() == WL_CONNECTED) {
         String cond = weatherCondition;
         cond.replace("_", " ");
         cond.toLowerCase();
-        cond[0] = toupper(cond[0]);
+        // Safety: Only capitalize if string has content
+        if (cond.length() > 0) {
+          cond[0] = toupper(cond[0]);
+        }
         static char condDisplay[32];
         strncpy(condDisplay, cond.c_str(), sizeof(condDisplay));
         condDisplay[sizeof(condDisplay) - 1] = '\0';
