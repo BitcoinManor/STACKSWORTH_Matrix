@@ -95,9 +95,9 @@ AsyncWebServer server(80);
 
 static WiFiClient httpClient;
 
-// 🐕 WDT Helper: Feed watchdog and yield to WiFi/RTOS
+// 🐕 WDT Helper: Yield to WiFi/RTOS tasks
+// NOTE: No explicit watchdog reset - ESP32 Arduino core handles WDT automatically
 static inline void feedWDT() {
-  esp_task_wdt_reset();
   delay(1);  // yield to WiFi/RTOS tasks
 }
 
@@ -496,7 +496,7 @@ void loadSavedSettingsAndConnect() {
 
     while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 30000) {
       Serial.print(".");
-      esp_task_wdt_reset(); // Feed watchdog  
+      // esp_task_wdt_reset(); // ❌ v2.0.66: Disabled - ESP32 Arduino core handles WDT automatically
       delay(500);
     }
 
@@ -629,7 +629,7 @@ bool performOTAUpdate(const char* firmwareURL) {
         lastPercent = percent;
       }
       
-      esp_task_wdt_reset(); // Feed watchdog during download
+      delay(10); // Yield during download
     }
     delay(1);
   }
@@ -1624,9 +1624,9 @@ bool fetchDaysSinceAthFromSatoNak() {
       http.setReuse(false);       // Don't reuse connection
       http.begin(url);
       
-      esp_task_wdt_reset(); // Feed watchdog before HTTP operation
+      // esp_task_wdt_reset(); // ❌ v2.0.66: Disabled - ESP32 Arduino core handles WDT
       int httpResponseCode = http.GET();
-      esp_task_wdt_reset(); // Feed watchdog after HTTP operation
+      // esp_task_wdt_reset(); // ❌ v2.0.66: Disabled - ESP32 Arduino core handles WDT
 
       if (httpResponseCode == 200)
       {
@@ -1684,9 +1684,9 @@ bool fetchDaysSinceAthFromSatoNak() {
       http.setReuse(false);       // Don't reuse connection
       http.begin(weatherURL);
       
-      esp_task_wdt_reset(); // Feed watchdog before HTTP operation
+      // esp_task_wdt_reset(); // ❌ v2.0.66: Disabled - ESP32 Arduino core handles WDT
       int httpCode = http.GET();
-      esp_task_wdt_reset(); // Feed watchdog after HTTP operation
+      // esp_task_wdt_reset(); // ❌ v2.0.66: Disabled - ESP32 Arduino core handles WDT
 
       if (httpCode == 200)
       {
@@ -1774,10 +1774,20 @@ bool fetchDaysSinceAthFromSatoNak() {
       // We've lost multiple units to this issue.
       // SOLUTION: Force hardware shutdown via SPI IMMEDIATELY before anything else.
       
-      // Initialize SPI immediately (ZERO delays allowed before this)
-      SPI.begin();
+      // v2.0.66: Force pins to safe state BEFORE SPI initialization
+      // This prevents random signals during the ESP32 boot delay (~200-300ms)
       pinMode(CS_PIN, OUTPUT);
-      digitalWrite(CS_PIN, HIGH);
+      pinMode(CLK_PIN, OUTPUT);
+      pinMode(DATA_PIN, OUTPUT);
+      digitalWrite(CS_PIN, HIGH);    // CS high = chips ignore signals
+      digitalWrite(CLK_PIN, LOW);    // Clock low = no transitions
+      digitalWrite(DATA_PIN, LOW);   // Data low = no commands
+      
+      // Small delay to let pins stabilize before SPI takeover
+      delayMicroseconds(100);
+      
+      // Initialize SPI immediately (pins already in safe state)
+      SPI.begin();
       
       // Send SHUTDOWN command to ALL 16 MAX7219 chips in the daisy chain
       // Must send 16 times because chips are daisy-chained (data shifts through each chip)
@@ -1805,9 +1815,9 @@ bool fetchDaysSinceAthFromSatoNak() {
       Serial.println("🛡️ SAFETY: LED burnout prevented - chips in safe shutdown state");
       Serial.println("🚀 Starting normal initialization sequence...");
       
-      // 🐕 NOTE: Watchdog managed by ESP32 Arduino core - no manual init needed
+      // 🐕 NOTE: Watchdog managed by ESP32 Arduino core - no manual init or reset needed
       // The framework automatically handles watchdog for both setup() and loop()
-      // Our esp_task_wdt_reset() calls throughout the code feed it properly
+      // TEST_BASIC_BOOT proves this works perfectly without any manual WDT calls
       
       // Now initialize P with proper library functions (chips already in safe state)
       P.begin(MAX_ZONES);
@@ -1993,7 +2003,7 @@ bool fetchDaysSinceAthFromSatoNak() {
           }
           
           delay(10);  // Small delay to not hog CPU
-          esp_task_wdt_reset(); // Feed watchdog during animation
+          delay(10); // Yield during animation
           }
         
         animLoop++; // Increment loop counter
@@ -2027,7 +2037,10 @@ bool fetchDaysSinceAthFromSatoNak() {
         }
         delay(1000); // Hold "WIFI CONNECTED" for 1 second
         
-        // 🔄 Show Loading message for data fetch
+        // �️ v2.0.66: Additional delay to let TCP/IP stack fully stabilize before starting server
+        delay(500);
+        
+        // �🔄 Show Loading message for data fetch
         P.displayClear();
         P.displayZoneText(ZONE_UPPER, "LOADING", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
         P.displayZoneText(ZONE_LOWER, "DATA...", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
@@ -2393,8 +2406,8 @@ bool fetchDaysSinceAthFromSatoNak() {
 
       // 🌐 Setup mDNS with retry logic - ONLY when WiFi is connected in STA mode
       // ALL units use "Matrix" for simplicity
+      bool mdnsStarted = false;
       if (wifiConnected && WiFi.status() == WL_CONNECTED) {
-        bool mdnsStarted = false;
         for (int retry = 0; retry < 3 && !mdnsStarted; retry++) {
           if (MDNS.begin("Matrix")) {
             Serial.println("✅ mDNS responder started - Access at http://Matrix.local");
@@ -2408,11 +2421,11 @@ bool fetchDaysSinceAthFromSatoNak() {
             delay(500);
           }
         }
+        if (!mdnsStarted) {
+          Serial.println("❌ mDNS failed after 3 attempts - use IP address instead");
+        }
       } else {
         Serial.println("⚠️ Skipping mDNS - WiFi not connected (will be available in AP mode via IP)");
-      }
-      if (!mdnsStarted) {
-        Serial.println("❌ mDNS failed after 3 attempts - use IP address instead");
       }
 
       bootMs = millis();
@@ -2472,13 +2485,17 @@ bool fetchDaysSinceAthFromSatoNak() {
     
     void loop()
     {
-      esp_task_wdt_reset();           // Reset watchdog
+      // NOTE: Watchdog automatically managed by ESP32 Arduino core - no manual reset needed
       dnsServer.processNextRequest(); // Handle captive portal DNS magic
 
       // 🚀 INITIAL FETCH - Run once on first loop iteration
       // 🎯 SMART: Only fetches data for metrics that are actually ENABLED by user
       // ⚡ FAST BOOT: Skips disabled metrics, optimizes boot time for user's config
       if (wifiConnected && !initialFetchDone && !apMode) {
+        // 🛡️ v2.0.66: Add small delay to let TCP/IP stack fully stabilize after boot
+        // Prevents lwIP assertion "sys_untimeout" race condition
+        delay(500);
+        
         Serial.println("🌍 Smart boot: Fetching only ENABLED metrics...");
         
         unsigned long now = millis();
@@ -2487,7 +2504,7 @@ bool fetchDaysSinceAthFromSatoNak() {
         // Check which metrics are enabled and fetch only those
         if (displayEnabled[0]) { // Block Height
           Serial.printf("🔍 [%d] Fetching Block Height...\n", ++fetchCount); 
-          esp_task_wdt_reset(); 
+          delay(10); // Yield before network call
           fetchHeightFromSatoNak(); 
           lastBlockHeightFetch = now;
           lastBlock = now; // ⚡ Set periodic scheduler timer so it knows Block was fetched
@@ -2497,7 +2514,7 @@ bool fetchDaysSinceAthFromSatoNak() {
         
         if (displayEnabled[1]) { // Miner
           Serial.printf("🔍 [%d] Fetching Miner...\n", ++fetchCount); 
-          esp_task_wdt_reset(); 
+          delay(10); // Yield before network call
           fetchMinerFromSatoNak();
           Serial.printf("✅ [%d] Miner complete\n", fetchCount);
           delay(200);
@@ -2505,7 +2522,7 @@ bool fetchDaysSinceAthFromSatoNak() {
         
         if (displayEnabled[3]) { // Price (also needed for Sats/Currency calc)
           Serial.printf("🔍 [%d] Fetching Price...\n", ++fetchCount); 
-          esp_task_wdt_reset(); 
+          delay(10); // Yield before network call
           fetchPriceFromSatoNak(); 
           lastPriceFetch = now;
           lastBTC = now; // ⚡ Set periodic scheduler timer so it knows Price was fetched
@@ -2515,7 +2532,7 @@ bool fetchDaysSinceAthFromSatoNak() {
         
         if (displayEnabled[8]) { // Fee Rate
           Serial.printf("🔍 [%d] Fetching Fee Rate...\n", ++fetchCount); 
-          esp_task_wdt_reset(); 
+          delay(10); // Yield before network call
           fetchFeeRate(); 
           lastFee = now;
           Serial.printf("✅ [%d] Fee Rate complete\n", fetchCount);
@@ -2525,7 +2542,7 @@ bool fetchDaysSinceAthFromSatoNak() {
         // Time is ALWAYS fetched (needed for Time/City, Day/Date, Moscow Time displays)
         if (displayEnabled[10] || displayEnabled[11] || displayEnabled[13]) {
           Serial.printf("🔍 [%d] Fetching Time...\n", ++fetchCount); 
-          esp_task_wdt_reset(); 
+          delay(10); // Yield before network call
           fetchTime();
           Serial.printf("✅ [%d] Time complete\n", fetchCount);
           delay(100);
@@ -2533,7 +2550,7 @@ bool fetchDaysSinceAthFromSatoNak() {
         
         if (displayEnabled[12]) { // Weather
           Serial.printf("🔍 [%d] Fetching Weather...\n", ++fetchCount); 
-          esp_task_wdt_reset();
+          delay(10); // Yield before network call
           // 🌍 Ensure lat/lon exist before fetching weather
           if (latitude == 0.0 && longitude == 0.0 && savedCity.length() > 0) {
             Serial.println("📍 Fetching lat/lon before weather...");
@@ -2671,13 +2688,12 @@ P.displayZoneText(0, bottomLine, PA_CENTER, 0, 2500, PA_FADE, PA_FADE);
 
 // Let the animation finish while keeping WDT happy (ESP32)
 while (!P.displayAnimate()) {
-  esp_task_wdt_reset();
-  delay(10);
+  delay(10); // Yield to system
 }
 
 P.displayClear();
 P.synchZoneStart();
-esp_task_wdt_reset(); // Feed watchdog after animation complete
+delay(10); // Yield after animation complete
 Serial.print("🎯 Smash Buy: ");
 Serial.print(topLine);
 Serial.print(" / ");
@@ -2722,54 +2738,54 @@ if (WiFi.status() == WL_CONNECTED) {
 
   // 1) BTC every BTC_INTERVAL
   if (now - lastBTC >= BTC_INTERVAL) {
-    esp_task_wdt_reset(); // Feed watchdog before network operations
+    delay(10); // Yield before network operations
     fetchBitcoinData();
     lastBTC = now;
     saveDisplayCache(); // Save after successful price update
-    esp_task_wdt_reset(); // Feed watchdog after network operations
+    delay(10); // Yield after network operations
   }
   // 2) Fee every FEE_INTERVAL (offset removed - smart boot handles initial stagger)
   else if (now - lastFee >= FEE_INTERVAL) {
-    esp_task_wdt_reset(); // Feed watchdog before network operations
+    delay(10); // Yield before network operations
     fetchFeeRate();
     lastFee = now;
-    esp_task_wdt_reset(); // Feed watchdog after network operations
+    delay(10); // Yield after network operations
   }
   // 3) Block height every BLOCK_INTERVAL (offset removed - smart boot handles initial stagger)
   else if (now - lastBlock >= BLOCK_INTERVAL) {
     Serial.println("🔄 Starting periodic data refresh cycle...");
-    Serial.println("🔍 [REFRESH-1/7] Fetching Block Height..."); esp_task_wdt_reset(); // Feed watchdog before network operations
+    Serial.println("🔍 [REFRESH-1/7] Fetching Block Height..."); delay(10); // Yield before network operations
     fetchBlockHeight();
     Serial.println("✅ [REFRESH-1/7] Block Height complete");
-    Serial.println("🔍 [REFRESH-2/7] Fetching Miner..."); esp_task_wdt_reset(); // Feed WDT after each API call to prevent timeout
+    Serial.println("🔍 [REFRESH-2/7] Fetching Miner..."); delay(10); // Yield after each API call
     fetchMinerFromSatoNak();
     Serial.println("✅ [REFRESH-2/7] Miner complete");
-    Serial.println("🔍 [REFRESH-3/7] Fetching Hashrate..."); esp_task_wdt_reset();
+    Serial.println("🔍 [REFRESH-3/7] Fetching Hashrate..."); delay(10);
     fetchHashrateFromSatoNak();
     Serial.println("✅ [REFRESH-3/7] Hashrate complete");
-    Serial.println("🔍 [REFRESH-4/7] Fetching Circulating Supply..."); esp_task_wdt_reset();
+    Serial.println("🔍 [REFRESH-4/7] Fetching Circulating Supply..."); delay(10);
     fetchCircSupplyFromSatoNak();
     Serial.println("✅ [REFRESH-4/7] Circulating Supply complete");
-    Serial.println("🔍 [REFRESH-5/7] Fetching ATH..."); esp_task_wdt_reset();
+    Serial.println("🔍 [REFRESH-5/7] Fetching ATH..."); delay(10);
     fetchAthFromSatoNak();
     Serial.println("✅ [REFRESH-5/7] ATH complete");
-    Serial.println("🔍 [REFRESH-6/7] Fetching Days Since ATH..."); esp_task_wdt_reset();
+    Serial.println("🔍 [REFRESH-6/7] Fetching Days Since ATH..."); delay(10);
     fetchDaysSinceAthFromSatoNak();
     Serial.println("✅ [REFRESH-6/7] Days Since ATH complete");
-    Serial.println("🔍 [REFRESH-7/7] Fetching 24H Change..."); esp_task_wdt_reset();
+    Serial.println("🔍 [REFRESH-7/7] Fetching 24H Change..."); delay(10);
     fetchChange24hFromSatoNak();
     Serial.println("✅ [REFRESH-7/7] 24H Change complete");
     Serial.println("🎉 Periodic data refresh cycle completed successfully!");
     lastBlock = now;
     saveDisplayCache(); // Save after successful data updates
-    esp_task_wdt_reset(); // Feed watchdog after network operations
+    delay(10); // Yield after network operations
   }
   // 4) Weather every WEATHER_INTERVAL (offset removed - smart boot handles initial stagger)
   else if (now - lastWeather >= WEATHER_INTERVAL) {
-    esp_task_wdt_reset(); // Feed watchdog before network operations
+    delay(10); // Yield before network operations
     fetchWeather();
     lastWeather = now;
-    esp_task_wdt_reset(); // Feed watchdog after network operations
+    delay(10); // Yield after network operations
   }
 }
 
