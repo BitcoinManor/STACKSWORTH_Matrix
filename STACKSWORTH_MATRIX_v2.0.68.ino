@@ -1,13 +1,11 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.67 - DEFENSIVE PROGRAMMING & UX POLISH
-// - 🛡️ WIFI GUARDS: Added WiFi checks to /doupdate and fetchLatLonFromCity() (prevents messy failures)
-// - ⚡ INSTANT RESPONSE: /identify sends response immediately, animation happens after (2s faster)
-// - 🔒 LAT/LON VALIDATION: fetchWeather() refuses to run with 0.0,0.0 coordinates (prevents wasted API calls)
-// - 💾 BRIGHTNESS FIX: Saves validated brightnessVal instead of raw input (fixes value mismatch)
-// - 🎬 REMOVED FLICKER: Stripped P.displayClear() from all display cases (MD_Parola handles buffers)
-// - ✅ TWO-STEP OTA: Kept /checkupdate endpoint for proper check-then-update UX flow
-// - 📡 FAIL-FAST: Functions now self-validate preconditions with clear error messages
+// v2.0.68 - RESET REASON DIAGNOSTIC (Tracking Why Boot Animation Returns)
+// - 🔍 RESET LOGGING: Added comprehensive reset reason tracking at boot (panic, watchdog, brownout, etc.)
+// - 🎯 DIAGNOSTIC FOCUS: Identifies exact cause of unexpected reboots vs. display logic issues
+// - 📊 DATA COLLECTION: Logs distinguish between power cycle, software restart, watchdog, brownout, crash
+// - 🛠️ TROUBLESHOOTING: Enables fact-based diagnosis instead of guessing about boot animation reappearance
+// Base: v2.0.67 improvements (WiFi guards, instant responses, validation, flicker removal)
 // Previous v2.0.65 fix (preserved):
 // - ✅ Removed manual watchdog init - ESP32 Arduino core manages it automatically
 // Previous v2.0.64 fix (preserved):
@@ -122,7 +120,7 @@ const uint8_t explosion[3][7] = {
 };
 
 // 🌍 API Endpoints & Configuration
-const char* FIRMWARE_VERSION = "v2.0.67";
+const char* FIRMWARE_VERSION = "v2.0.68";
 const char* UPDATE_URL = "https://satonak.bitcoinmanor.com/firmware/stacksworth.bin";
 
 // API endpoints for fallback services  
@@ -1828,7 +1826,25 @@ bool fetchDaysSinceAthFromSatoNak() {
       Serial.println("🛡️ SAFETY: LED burnout prevented - chips in safe shutdown state");
       Serial.println("🚀 Starting normal initialization sequence...");
       
-      // 🐕 NOTE: Watchdog managed by ESP32 Arduino core - no manual init or reset needed
+      // � DIAGNOSTIC: Log reset reason to identify unexpected reboots
+      esp_reset_reason_t resetReason = esp_reset_reason();
+      Serial.print("🔍 RESET REASON: ");
+      switch (resetReason) {
+        case ESP_RST_UNKNOWN:   Serial.println("UNKNOWN"); break;
+        case ESP_RST_POWERON:   Serial.println("POWER ON (normal boot)"); break;
+        case ESP_RST_EXT:       Serial.println("EXTERNAL PIN RESET"); break;
+        case ESP_RST_SW:        Serial.println("SOFTWARE RESET"); break;
+        case ESP_RST_PANIC:     Serial.println("⚠️ PANIC/EXCEPTION (crash detected)"); break;
+        case ESP_RST_INT_WDT:   Serial.println("⚠️ INTERRUPT WATCHDOG TIMEOUT"); break;
+        case ESP_RST_TASK_WDT:  Serial.println("⚠️ TASK WATCHDOG TIMEOUT"); break;
+        case ESP_RST_WDT:       Serial.println("⚠️ OTHER WATCHDOG TIMEOUT"); break;
+        case ESP_RST_DEEPSLEEP: Serial.println("DEEP SLEEP WAKEUP"); break;
+        case ESP_RST_BROWNOUT:  Serial.println("⚠️ BROWNOUT (power supply voltage drop)"); break;
+        case ESP_RST_SDIO:      Serial.println("SDIO RESET"); break;
+        default:                Serial.printf("UNRECOGNIZED (%d)\n", resetReason); break;
+      }
+      
+      // �🐕 NOTE: Watchdog managed by ESP32 Arduino core - no manual init or reset needed
       // The framework automatically handles watchdog for both setup() and loop()
       // TEST_BASIC_BOOT proves this works perfectly without any manual WDT calls
       
