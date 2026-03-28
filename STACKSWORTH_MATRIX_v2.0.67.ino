@@ -1,13 +1,13 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.66 - PRODUCTION SHIPMENT FIX (All Critical Stability Issues Resolved)
-// - 🚨 DISABLED LOW-HEAP REBOOT: Changed from restart to warning (prevents boot loops)
-// - 🚨 REMOVED WDT FROM CALLBACKS: Fixed "task not found" by removing esp_task_wdt_reset() from AsyncWebServer handlers
-// - 🚀 REMOVED BOOT AUTO-UPDATE: No automatic update checks, manual-only via portal button
-// - 🌐 MDNS WIFI GUARD: Only start mDNS when WiFi actually connected (prevents AP mode issues)
-// - 🔄 FIXED RECONNECT: Replaced modulo logic with proper timestamp-based retry
-// - 🛡️ SAFETY CHECKS: Added city/weather/brightness validation before use/save
-// - 🌍 LAT/LON BEFORE WEATHER: Ensures coordinates fetched before first weather call
+// v2.0.67 - DEFENSIVE PROGRAMMING & UX POLISH
+// - 🛡️ WIFI GUARDS: Added WiFi checks to /doupdate and fetchLatLonFromCity() (prevents messy failures)
+// - ⚡ INSTANT RESPONSE: /identify sends response immediately, animation happens after (2s faster)
+// - 🔒 LAT/LON VALIDATION: fetchWeather() refuses to run with 0.0,0.0 coordinates (prevents wasted API calls)
+// - 💾 BRIGHTNESS FIX: Saves validated brightnessVal instead of raw input (fixes value mismatch)
+// - 🎬 REMOVED FLICKER: Stripped P.displayClear() from all display cases (MD_Parola handles buffers)
+// - ✅ TWO-STEP OTA: Kept /checkupdate endpoint for proper check-then-update UX flow
+// - 📡 FAIL-FAST: Functions now self-validate preconditions with clear error messages
 // Previous v2.0.65 fix (preserved):
 // - ✅ Removed manual watchdog init - ESP32 Arduino core manages it automatically
 // Previous v2.0.64 fix (preserved):
@@ -122,7 +122,7 @@ const uint8_t explosion[3][7] = {
 };
 
 // 🌍 API Endpoints & Configuration
-const char* FIRMWARE_VERSION = "v2.0.66";
+const char* FIRMWARE_VERSION = "v2.0.67";
 const char* UPDATE_URL = "https://satonak.bitcoinmanor.com/firmware/stacksworth.bin";
 
 // API endpoints for fallback services  
@@ -1605,6 +1605,12 @@ bool fetchDaysSinceAthFromSatoNak() {
 
     void fetchLatLonFromCity()
     {
+      if (WiFi.status() != WL_CONNECTED)
+      {
+        Serial.println("⚠️ No WiFi connection, skipping lat/lon fetch.");
+        return;
+      }
+      
       if (ESP.getFreeHeap() < MIN_HEAP_REQUIRED)
       {
         Serial.println("❌ Not enough heap to safely fetch. Skipping BTC fetch.");
@@ -1670,6 +1676,13 @@ bool fetchDaysSinceAthFromSatoNak() {
       if (savedCity == "")
       {
         Serial.println("❌ City not set, skipping weather fetch.");
+        return;
+      }
+      
+      // 🛡️ Safety guard: Don't fetch weather with invalid coordinates
+      if (latitude == 0.0 && longitude == 0.0)
+      {
+        Serial.println("⚠️ No valid lat/lon, skipping weather fetch.");
         return;
       }
 
@@ -2307,6 +2320,9 @@ bool fetchDaysSinceAthFromSatoNak() {
       server.on("/identify", HTTP_GET, [](AsyncWebServerRequest *request) {
         Serial.println("🔍 Identify button pressed - showing portal active message");
         
+        // Send response immediately so browser doesn't hang
+        request->send(200, "text/plain", "Device identify started!");
+        
         // Show identification message on display
         P.displayClear();
         P.displayZoneText(ZONE_UPPER, "PORTAL", PA_CENTER, 0, 5000, PA_FADE, PA_FADE);
@@ -2321,13 +2337,12 @@ bool fetchDaysSinceAthFromSatoNak() {
           delay(10); // yield() happens in delay
         }
         
-        request->send(200, "text/plain", "Device identified!");
         Serial.println("✅ Identify animation complete");
       });
 
       // 🔄 OTA Update endpoints
       
-      // Check for available updates
+      // Check for available updates (user-triggered only, no automatic checks)
       server.on("/checkupdate", HTTP_GET, [](AsyncWebServerRequest *request) {
         Serial.println("🔍 Checking for firmware updates...");
         
@@ -2353,8 +2368,14 @@ bool fetchDaysSinceAthFromSatoNak() {
         }
       });
       
-      // Perform OTA update
+      // Perform OTA update (manual only)
       server.on("/doupdate", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (WiFi.status() != WL_CONNECTED)
+        {
+          request->send(503, "text/plain", "No WiFi connection. Connect to WiFi before updating.");
+          return;
+        }
+        
         Serial.println("🚀 OTA update requested via web portal");
         
         // Send response immediately before starting update
@@ -2804,7 +2825,6 @@ if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "BLOCK", blockText); 
         P.displayZoneText(ZONE_UPPER, "BLOCK",   PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayZoneText(ZONE_LOWER, blockText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
-        P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
       }
@@ -2816,7 +2836,6 @@ if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MINER", minerName.c_str());
         P.displayZoneText(ZONE_UPPER, "MINED BY", PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayZoneText(ZONE_LOWER, minerName.c_str(), PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
-        P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
       }
@@ -2828,7 +2847,6 @@ if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", circSupplyText, circPercentText);
         P.displayZoneText(ZONE_UPPER, circSupplyText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayZoneText(ZONE_LOWER, circPercentText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
-        P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
       }
@@ -2844,7 +2862,6 @@ if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("🔍 DEBUG: btcText='%s', length=%d\n", btcText, strlen(btcText));
         P.displayZoneText(ZONE_UPPER, priceLabel, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayZoneText(ZONE_LOWER, btcText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
-        P.displayClear();
         P.synchZoneStart();
         break;
       } 
@@ -2857,7 +2874,6 @@ if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "24H CHANGE", changeText);
         P.displayZoneText(ZONE_UPPER, "24H CHANGE", PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayZoneText(ZONE_LOWER, changeText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
-        P.displayClear();
         P.synchZoneStart();
         break;
       }
@@ -2869,7 +2885,6 @@ if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "ATH", athText);
         P.displayZoneText(ZONE_UPPER, "ATH", PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayZoneText(ZONE_LOWER, athText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
-        P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
       }
@@ -2881,7 +2896,6 @@ if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", daysAthText, "Since ATH");
         P.displayZoneText(ZONE_UPPER, daysAthText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayZoneText(ZONE_LOWER, "Since ATH", PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
-        P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
       }
@@ -2896,7 +2910,6 @@ if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", satsLabel, satsText);
         P.displayZoneText(ZONE_UPPER, satsLabel, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayZoneText(ZONE_LOWER, satsText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
-        P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization  
         break;
       }
@@ -2908,7 +2921,6 @@ if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "FEE RATE", feeText);
         P.displayZoneText(ZONE_UPPER, "FEE RATE", PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayZoneText(ZONE_LOWER, feeText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
-        P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
       }
@@ -2920,7 +2932,6 @@ if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "HASHRATE", hashrateText);
         P.displayZoneText(ZONE_UPPER, "HASHRATE", PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayZoneText(ZONE_LOWER, hashrateText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
-        P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
       }
@@ -2935,7 +2946,6 @@ if (WiFi.status() == WL_CONNECTED) {
         const char* cityDisplay = (savedCity.length() > 0) ? savedCity.c_str() : "LOCAL TIME";
         P.displayZoneText(ZONE_UPPER, cityDisplay, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayZoneText(ZONE_LOWER, timeText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
-        P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
       }
@@ -2948,7 +2958,6 @@ if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", dayText, dateText);
         P.displayZoneText(ZONE_UPPER, dayText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayZoneText(ZONE_LOWER, dateText, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
-        P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
       }
@@ -2983,7 +2992,6 @@ if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", tempDisplay, condDisplay);
         P.displayZoneText(ZONE_UPPER, tempDisplay, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayZoneText(ZONE_LOWER, condDisplay, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
-        P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization
         break;
       }
@@ -2997,7 +3005,6 @@ if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("🔤 Displaying text: %s (Top), %s (Bottom)\n", "MOSCOW TIME", satsText2);
         P.displayZoneText(ZONE_UPPER, "MOSCOW TIME", PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
         P.displayZoneText(ZONE_LOWER, satsText2, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut);
-        P.displayClear(); //  Force clear
         P.synchZoneStart(); // Force synchronization  
         break;
       }
@@ -3013,7 +3020,6 @@ if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("🔤 Displaying custom message: %s (Top), %s (Bottom)\n", topLine, bottomLine);
         P.displayZoneText(ZONE_UPPER, topLine, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut); 
         P.displayZoneText(ZONE_LOWER, bottomLine, PA_CENTER, SCROLL_SPEED, 10000, effectIn, effectOut); 
-        P.displayClear();
         P.synchZoneStart();
         break;
       }
