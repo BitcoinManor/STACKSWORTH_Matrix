@@ -2258,7 +2258,7 @@ bool fetchDaysSinceAthFromSatoNak() {
     Serial.println("✅ Settings saved to NVS!");
     
     // ✅ IMMEDIATELY APPLY CHANGES (don't wait for reboot)
-    savedBrightness = brightness.toInt();
+    savedBrightness = brightnessVal;  // Use validated value, not raw input
     savedTempUnit = tempunit;
     savedCity = city;
     savedCurrency = currency;
