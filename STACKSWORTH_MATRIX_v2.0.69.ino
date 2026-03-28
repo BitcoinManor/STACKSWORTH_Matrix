@@ -1,11 +1,12 @@
 // 🚀 STACKSWORTH_MATRIX_MASTER USING OUR SATONAK API
 // Built By BitcoinManor.com
-// v2.0.68 - RESET REASON DIAGNOSTIC (Tracking Why Boot Animation Returns)
-// - 🔍 RESET LOGGING: Added comprehensive reset reason tracking at boot (panic, watchdog, brownout, etc.)
-// - 🎯 DIAGNOSTIC FOCUS: Identifies exact cause of unexpected reboots vs. display logic issues
-// - 📊 DATA COLLECTION: Logs distinguish between power cycle, software restart, watchdog, brownout, crash
-// - 🛠️ TROUBLESHOOTING: Enables fact-based diagnosis instead of guessing about boot animation reappearance
-// Base: v2.0.67 improvements (WiFi guards, instant responses, validation, flicker removal)
+// v2.0.69 - CRITICAL PRE-SHIP HARDENING (Sam & Alex Final Review)
+// - 🛡️ OTA TO LOOP: Moved OTA execution OUT of AsyncWebServer callback into main loop (prevents lwIP issues)
+// - 🔋 BOOT POWER REDUCTION: Keep brightness at 1 during boot, restore after server starts (brownout mitigation)
+// - ⚡ ANIMATION SHORTENED: Reduced boot animation from 10 to 5 loops (lower current draw during startup)
+// - 🔒 PENDING FLAG: OTA now uses pendingOTA flag checked in loop() instead of direct callback execution
+// - 💡 SAFER UPDATES: Long-running OTA HTTP/streaming/restart now in safe loop context, not async callback
+// Base: v2.0.68 (reset logging, complete network protection, WiFi guards, fail-fast error handling)
 // Previous v2.0.65 fix (preserved):
 // - ✅ Removed manual watchdog init - ESP32 Arduino core manages it automatically
 // Previous v2.0.64 fix (preserved):
@@ -63,6 +64,7 @@ volatile bool pendingReboot = false;
 bool rebootPhaseShown = false;
 unsigned long rebootAt = 0;
 bool apMode = false;
+bool pendingOTA = false;  // Flag to trigger OTA from loop() instead of callback
 bool apMsgShown = false;
 bool initialFetchDone = false;  // Track if we've done first data fetch
 bool hasEverConnected = false;  // Track if WiFi has ever successfully connected
@@ -120,7 +122,7 @@ const uint8_t explosion[3][7] = {
 };
 
 // 🌍 API Endpoints & Configuration
-const char* FIRMWARE_VERSION = "v2.0.68";
+const char* FIRMWARE_VERSION = "v2.0.69";
 const char* UPDATE_URL = "https://satonak.bitcoinmanor.com/firmware/stacksworth.bin";
 
 // API endpoints for fallback services  
@@ -550,6 +552,12 @@ void showUpdateProgress(int percentage) {
 
 // ✅ OTA UPDATE - Using Update.h directly (no HTTPUpdate library conflicts)
 bool performOTAUpdate(const char* firmwareURL) {
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.println("❌ OTA aborted: No WiFi connection.");
+    return false;
+  }
+  
   Serial.println("🚀 Starting OTA update...");
   Serial.printf("📥 Downloading from: %s\n", firmwareURL);
   
@@ -1666,6 +1674,12 @@ bool fetchDaysSinceAthFromSatoNak() {
 
     void fetchWeather()
     {
+      if (WiFi.status() != WL_CONNECTED)
+      {
+        Serial.println("⚠️ No WiFi connection, skipping weather fetch.");
+        return;
+      }
+      
       if (ESP.getFreeHeap() < MIN_HEAP_REQUIRED)
       {
         Serial.println("❌ Not enough heap to safely fetch. Skipping BTC fetch.");
@@ -1893,7 +1907,9 @@ bool fetchDaysSinceAthFromSatoNak() {
       savedDeviceName = prefs.getString("devicename", "");
       savedBrightness = prefs.getUChar("brightness", 2);
       savedTimezone = prefs.getInt("timezone", -99);
-      BRIGHTNESS = savedBrightness;
+      // 🔋 v2.0.68: Keep brightness at 1 during boot to reduce power draw
+      // User's brightness will be restored after server startup
+      // BRIGHTNESS = savedBrightness;  // Disabled - restored later for brownout mitigation
       
       // 📊 Load display enabled states (will use new defaults if not saved)
       for (int i = 0; i < 15; i++) {
@@ -1933,7 +1949,7 @@ bool fetchDaysSinceAthFromSatoNak() {
         
         // Loop animation until WiFi connects (or timeout/max loops)
         uint8_t animLoop = 0;
-        const uint8_t MAX_ANIMATION_LOOPS = 10; // Safety limit
+        const uint8_t MAX_ANIMATION_LOOPS = 5; // 🔋 v2.0.68: Reduced from 10 to 5 to minimize boot power draw
         
         while (animLoop < MAX_ANIMATION_LOOPS) {
           // 🔍 Check if WiFi connected during animation
@@ -2161,10 +2177,11 @@ bool fetchDaysSinceAthFromSatoNak() {
       // Show IP/Portal immediately (if WiFi not connected)
       if (!wifiConnected)
       {
-        // Set a visible brightness for portal screen
-        Serial.println("💡 Setting brightness for portal screen...");
-        P.setIntensity(ZONE_UPPER, 3);  // Medium-low brightness for setup
-        P.setIntensity(ZONE_LOWER, 3);
+        // 🔋 v2.0.69: Keep brightness at 1 even for portal screen (brownout mitigation)
+        // Brightness will be restored after server.begin() completes
+        Serial.println("🔋 Portal screen will display at brightness 1 (brownout-safe)...");
+        P.setIntensity(ZONE_UPPER, 1);  // Keep at 1 through entire boot
+        P.setIntensity(ZONE_LOWER, 1);
         
         // Show portal status and IP address immediately - NO welcome animation
         Serial.println("📡 Showing portal status and IP...");
@@ -2185,12 +2202,14 @@ bool fetchDaysSinceAthFromSatoNak() {
         Serial.println("✅ Portal screen displayed - ready for setup");
       }
 
-      // Now restore user's preferred brightness after welcome screens
-      Serial.println("💡 Restoring user brightness settings...");
-      P.setIntensity(ZONE_UPPER, BRIGHTNESS);
-      P.setIntensity(ZONE_LOWER, BRIGHTNESS);
+      // 🔋 v2.0.69: Keep brightness at 1 until after server.begin() completes
+      // This maintains minimal power draw through entire boot sequence for brownout mitigation
+      // User's saved brightness will be restored after server is fully started
+      Serial.println("🔋 Maintaining brownout-safe brightness (1) through server startup...");
+      P.setIntensity(ZONE_UPPER, 1);
+      P.setIntensity(ZONE_LOWER, 1);
       
-      Serial.printf("💡 Brightness restored to: %d/15 for all zones\n", BRIGHTNESS);
+      Serial.println("🔋 Brightness held at 1/15 through boot - will restore after server starts");
 
       // 🕒 Time Config - only set default if not already configured in loadSavedSettingsAndConnect()
       if (!wifiConnected) {
@@ -2385,6 +2404,7 @@ bool fetchDaysSinceAthFromSatoNak() {
       });
       
       // Perform OTA update (manual only)
+      // 🛡️ v2.0.68: OTA now triggered via flag, executed in loop() to avoid AsyncWebServer callback risks
       server.on("/doupdate", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (WiFi.status() != WL_CONNECTED)
         {
@@ -2394,14 +2414,12 @@ bool fetchDaysSinceAthFromSatoNak() {
         
         Serial.println("🚀 OTA update requested via web portal");
         
-        // Send response immediately before starting update
-        request->send(200, "text/plain", "Update started. Matrix will reboot if successful.");
+        // Send response immediately
+        request->send(200, "text/plain", "Update starting. Matrix will reboot if successful.");
         
-        // Small delay to ensure response is sent
-        delay(500);
-        
-        // Perform the update (this will reboot if successful)
-        performOTAUpdate(UPDATE_URL);
+        // Set flag to trigger OTA in loop() instead of executing here
+        // This keeps AsyncWebServer callback clean and avoids lwIP issues
+        pendingOTA = true;
       });
 
       // Brightness control endpoint
@@ -2440,6 +2458,13 @@ bool fetchDaysSinceAthFromSatoNak() {
       server.begin();
       Serial.println("🌍 Async Web server started");
       delay(2000); // 🕒 Let server stabilize after starting
+      
+      // 🔋 v2.0.68: Restore user's saved brightness AFTER server fully started
+      // Boot kept brightness at 1 to reduce power draw and minimize brownout risk
+      if (savedBrightness > 0 && savedBrightness <= 15) {
+        Serial.printf("✨ Restoring user brightness from %d to %d\n", BRIGHTNESS, savedBrightness);
+        setBrightness(savedBrightness);
+      }
 
       // 🌐 Setup mDNS with retry logic - ONLY when WiFi is connected in STA mode
       // ALL units use "Matrix" for simplicity
@@ -2524,6 +2549,16 @@ bool fetchDaysSinceAthFromSatoNak() {
     {
       // NOTE: Watchdog automatically managed by ESP32 Arduino core - no manual reset needed
       dnsServer.processNextRequest(); // Handle captive portal DNS magic
+      
+      // 🛡️ v2.0.68: Handle OTA execution in main loop (not in AsyncWebServer callback)
+      // This avoids lwIP/async issues with long-running HTTP downloads inside callback context
+      if (pendingOTA) {
+        pendingOTA = false;  // Clear flag immediately
+        Serial.println("⚡ Executing OTA update from main loop (safe context)...");
+        delay(500);  // Brief delay to ensure HTTP response was sent
+        performOTAUpdate(UPDATE_URL);  // This will reboot if successful
+        // If we reach here, OTA failed - flag already cleared, loop continues normally
+      }
 
       // 🚀 INITIAL FETCH - Run once on first loop iteration
       // 🎯 SMART: Only fetches data for metrics that are actually ENABLED by user
