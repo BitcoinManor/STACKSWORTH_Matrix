@@ -4,7 +4,10 @@
 ![STACKSWORTH Banner](https://github.com/BitcoinManor/STACKSWORTH_Matrix/raw/main/assets/stacksworth_banner.png)
 
 Welcome to **STACKSWORTH**, the future of open-source Bitcoin displays.  
-Watch Bitcoin’s pulse at a glance — live price, block height, fees, sats per dollar, time, and more — all from a sleek plug-and-play LED matrix built for Bitcoiners.
+
+**This is Bitcoin’s Pulse, at a glance.**
+
+Watch Bitcoin’s pulse live — price, block height, fees, sats per dollar, time, and more — all from a sleek plug-and-play LED matrix built for Bitcoiners.
 
 ---
 
@@ -12,17 +15,11 @@ Watch Bitcoin’s pulse at a glance — live price, block height, fees, sats per
 
 ### 🔥 Major Improvements
 - ✅ **Manual OTA Updates (Stable)**  
-  Trigger updates directly from the web portal  
 - 🔄 **Improved Stability & Error Handling**  
-  Graceful fallback during API failures (no crashes, no freezing)  
 - 🧠 **Smart Cached Display System**  
-  Continues running even during network outages  
-- 🔌 **Safer Boot Sequence**  
-  Reduced LED power draw during startup  
+- 🔌 **Safer Boot Sequence (Reduced Power Draw)**  
 - 🌐 **Improved WiFi Reconnect Logic**  
-  Background reconnect without interrupting display  
-- 🆔 **MAC-Based Device ID**  
-  Unique ID across hotspot, portal, and UI  
+- 🆔 **MAC-Based Device ID System**  
 
 📦 [Download Firmware](https://github.com/BitcoinManor/STACKSWORTH_MATRIX/releases)  
 📓 [View Changelog](https://github.com/BitcoinManor/STACKSWORTH_MATRIX/blob/main/CHANGELOG.md)
@@ -38,10 +35,10 @@ Watch Bitcoin’s pulse at a glance — live price, block height, fees, sats per
   Join `SW-MATRIX-XXXXXX`  
 
 - ⚙️ **Configure:**  
-  Enter WiFi, City, Timezone via portal  
+  Enter WiFi, City, Timezone  
 
 - 🚀 **Done:**  
-  Device reboots and begins displaying Bitcoin data  
+  Device reboots and displays live Bitcoin data  
 
 ---
 
@@ -61,9 +58,9 @@ No noise. Just signal.
 
 ## 📊 Metrics Displayed
 
-Powered primarily by the **SatoNak self-sovereign API**, with fallback support:
+Powered by our **SatoNak self-sovereign API** with fallback sources:
 
-- 💰 BTC Price (multi-currency)
+- 💰 BTC Price  
 - 📦 Block Height  
 - 🚦 Fee Rate (sat/vB)  
 - 🏭 Mining Pool  
@@ -75,13 +72,24 @@ Powered primarily by the **SatoNak self-sovereign API**, with fallback support:
 
 ---
 
-## 🌐 Data Infrastructure
+## 🌐 SatoNak API Endpoints
 
-### Primary (Self-Sovereign)
-- SatoNak API  
-  https://satonak.bitcoinmanor.com
+Self-hosted, sovereign data layer:
 
-### Fallback Sources
+- Price → https://satonak.bitcoinmanor.com/api/price  
+- Price (CAD) → https://satonak.bitcoinmanor.com/api/price?fiat=CAD  
+- Price (EUR) → https://satonak.bitcoinmanor.com/api/price?fiat=EUR  
+- Block Height → https://satonak.bitcoinmanor.com/api/height  
+- Fee → https://satonak.bitcoinmanor.com/api/fee  
+- Hashrate → https://satonak.bitcoinmanor.com/api/hashrate  
+- Circulating Supply → https://satonak.bitcoinmanor.com/api/circsupply  
+- Miner → https://satonak.bitcoinmanor.com/api/miner  
+- 24H Change → https://satonak.bitcoinmanor.com/api/change24h  
+
+---
+
+## 🌐 Backup Data Sources
+
 - CoinGecko  
 - mempool.space  
 - blockchain.info  
@@ -102,5 +110,63 @@ Powered primarily by the **SatoNak self-sovereign API**, with fallback support:
 
 ## 🧰 Developer Setup
 
-```bash
-git clone https://github.com/BitcoinManor/STACKSWORTH_Matrix.git
+1. Clone the repo  
+   git clone https://github.com/BitcoinManor/STACKSWORTH_Matrix.git  
+
+2. Open `.ino` in Arduino IDE  
+
+3. Install required libraries  
+
+4. Upload firmware  
+
+5. Upload `/data` folder (SPIFFS)  
+
+6. Connect to device hotspot  
+
+7. Configure WiFi and settings  
+
+---
+
+## 🔄 OTA Updates
+
+Manual OTA is supported.
+
+- Trigger update from web portal  
+- Device downloads firmware  
+- Safe reboot on success  
+
+---
+
+## ⚠️ Notes
+
+- Designed for **24/7 operation**
+- Handles API failures gracefully
+- Uses cached data during outages
+- Reset logging included for diagnostics
+
+---
+
+## 🙏 Inspiration
+
+Inspired by the work of  
+:contentReference[oaicite:2]{index=2} and the  
+:contentReference[oaicite:3]{index=3}
+
+Built on the shoulders of Bitcoin builders.
+
+---
+
+## 📜 License
+
+MIT License — use freely, fork often, flash everything.
+
+---
+
+## ⚡ Final Word
+
+This is not just another gadget.
+
+This is **Bitcoin’s Pulse**, at a glance.
+
+Built with ⚡ by Bitcoin Manor  
+https://bitcoinmanor.com
