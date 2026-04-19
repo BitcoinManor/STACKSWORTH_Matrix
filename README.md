@@ -149,8 +149,7 @@ Manual OTA is supported.
 ## 🙏 Inspiration
 
 Inspired by the work of  
-:contentReference[oaicite:2]{index=2} and the  
-:contentReference[oaicite:3]{index=3}
+BenArc with his Hal Finney Bitcoin Ticker
 
 Built on the shoulders of Bitcoin builders.
 
