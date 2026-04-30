@@ -146,6 +146,22 @@ Manual OTA is supported.
 
 ---
 
+## STACKSWORTH LINEUP
+
+Bitcoin Metrics Displays
+-Mini 1.8"
+-Core 2.8"
+-Matrix 16x64 LED Matrix Modules
+-Spark 7" Touch Screen
+
+Bitcoin Node and Metrics Display/ Bitaxe Hub
+-Pulse 5" Touch with Rapberry Pi/ 2TB SSD
+-Edge 7" Touch with Raspberry Pi/ 2TB SSD
+-Infinity 10" Touch/Speakers with Raspberry Pi/ 2TB SSD
+
+
+---
+
 ## 🙏 Inspiration
 
 Inspired by the work of  
